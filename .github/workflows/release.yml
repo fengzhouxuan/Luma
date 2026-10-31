@@ -45,7 +45,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Luma ${{ github.ref_name }}"
-          releaseBody: "自动构建发布。详见 CHANGELOG 或提交历史。"
+          releaseBody: "下载对应安装包即可。详见 [CHANGELOG](https://github.com/fengzhouxuan/Luma/blob/main/CHANGELOG.md)。"
           releaseDraft: false
           prerelease: false
 
