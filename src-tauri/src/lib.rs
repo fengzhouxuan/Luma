@@ -2,6 +2,8 @@ use serde::Serialize;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+mod config;
+
 #[derive(Serialize, Clone)]
 struct AppEntry {
     name: String,
@@ -430,7 +432,7 @@ fn disable_window_corner_and_shadow(hwnd: isize) {
 #[cfg(not(windows))]
 fn disable_window_corner_and_shadow(_hwnd: isize) {}
 
-// ==================== 双击 Alt 呼出（低级键盘钩子）====================
+// ==================== 唤醒快捷键（低级键盘钩子）====================
 
 #[cfg(windows)]
 mod double_alt {
@@ -439,13 +441,18 @@ mod double_alt {
     use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{VK_ESCAPE, VK_LMENU, VK_RMENU};
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        VK_CONTROL, VK_ESCAPE, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_MENU, VK_RCONTROL, VK_RMENU,
+        VK_RSHIFT, VK_SHIFT,
+    };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG,
         WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
     };
 
-    /// 全局标志：检测到双击 Alt 时置 true，主线程读取后复位
+    use crate::config::{self, Hotkey};
+
+    /// 全局标志：检测到唤醒快捷键时置 true，主线程读取后复位
     pub static TOGGLE: AtomicBool = AtomicBool::new(false);
 
     /// 全局标志：检测到 Esc 按下时置 true，主线程读取后复位（用于隐藏窗口）
@@ -454,8 +461,56 @@ mod double_alt {
     /// 标记窗口是否处于"由我们主动显示"的状态（权威来源，避免 is_visible 状态不一致）
     pub static WINDOW_VISIBLE: AtomicBool = AtomicBool::new(false);
 
-    /// 上次 Alt 按下时间（用于判断是否"双击"）
-    static LAST_ALT: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+    /// 上次"双击单键"的按下时间（用于判断是否"双击"）
+    static LAST_TAP: OnceLock<Mutex<Option<(String, Instant)>>> = OnceLock::new();
+
+    /// 组合键模式下，当前按下的修饰键集合（用于追踪组合键状态）
+    static PRESSED_MODS: OnceLock<Mutex<Vec<u32>>> = OnceLock::new();
+
+    /// 将虚拟键码映射为配置里的键名字符串
+    fn vk_to_name(vk: u32) -> Option<&'static str> {
+        match vk {
+            v if v == VK_MENU as u32 || v == VK_LMENU as u32 || v == VK_RMENU as u32 => Some("alt"),
+            v if v == VK_CONTROL as u32 || v == VK_LCONTROL as u32 || v == VK_RCONTROL as u32 => {
+                Some("ctrl")
+            }
+            v if v == VK_SHIFT as u32 || v == VK_LSHIFT as u32 || v == VK_RSHIFT as u32 => {
+                Some("shift")
+            }
+            _ => None,
+        }
+    }
+
+    /// 判断一个虚拟键码是否是修饰键（Ctrl/Alt/Shift/Win）
+    fn is_modifier(vk: u32) -> bool {
+        vk_to_name(vk).is_some()
+    }
+
+    /// 将主键（非修饰键）虚拟键码映射为配置里的键名
+    fn main_key_name(vk: u32) -> String {
+        // 字母 A-Z
+        if (0x41..=0x5A).contains(&vk) {
+            return ((vk as u8) as char).to_ascii_lowercase().to_string();
+        }
+        // 数字 0-9
+        if (0x30..=0x39).contains(&vk) {
+            return ((vk as u8) as char).to_string();
+        }
+        // 功能键 F1-F12
+        if (0x70..=0x7B).contains(&vk) {
+            return format!("f{}", vk - 0x70 + 1);
+        }
+        // 特殊键
+        match vk {
+            0x20 => "space".to_string(),
+            0x0D => "enter".to_string(),
+            0x09 => "tab".to_string(),
+            0x1B => "esc".to_string(),
+            0x2E => "delete".to_string(),
+            0x08 => "backspace".to_string(),
+            _ => format!("vk{}", vk),
+        }
+    }
 
     unsafe extern "system" fn keyboard_proc(
         n_code: i32,
@@ -466,20 +521,73 @@ mod double_alt {
             let kb = unsafe { &*(l_param as *const KBDLLHOOKSTRUCT) };
             let is_down =
                 w_param == WM_KEYDOWN as usize || w_param == WM_SYSKEYDOWN as usize;
-            let is_alt = kb.vkCode == VK_LMENU as u32 || kb.vkCode == VK_RMENU as u32;
+            let is_up = w_param == 0x0101 || w_param == 0x0105; // WM_KEYUP / WM_SYSKEYUP
 
-            if is_down && is_alt {
-                let last = LAST_ALT.get_or_init(|| Mutex::new(None));
-                let mut guard = last.lock().unwrap();
-                let now = Instant::now();
-                let is_double = match *guard {
-                    Some(prev) => now.duration_since(prev) < Duration::from_millis(400),
-                    None => false,
-                };
-                *guard = Some(now);
+            let hotkey = config::get().hotkey;
 
-                if is_double {
-                    TOGGLE.store(true, Ordering::SeqCst);
+            match &hotkey {
+                // 双击单键模式
+                Hotkey::Double { key } => {
+                    // 期望的修饰键名 → 检查是否匹配
+                    if is_down {
+                        if let Some(name) = vk_to_name(kb.vkCode) {
+                            if name == key {
+                                let last = LAST_TAP.get_or_init(|| Mutex::new(None));
+                                let mut guard = last.lock().unwrap();
+                                let now = Instant::now();
+                                let is_double = match &*guard {
+                                    Some((prev_key, prev_time)) => {
+                                        prev_key == key
+                                            && now.duration_since(*prev_time)
+                                                < Duration::from_millis(400)
+                                    }
+                                    None => false,
+                                };
+                                *guard = Some((key.clone(), now));
+
+                                if is_double {
+                                    TOGGLE.store(true, Ordering::SeqCst);
+                                }
+                            }
+                        }
+                    }
+                }
+                // 组合键模式：修饰键 + 主键
+                Hotkey::Combo { modifiers, key } => {
+                    // 追踪修饰键按下/释放
+                    if is_down && is_modifier(kb.vkCode) {
+                        let mods = PRESSED_MODS.get_or_init(|| Mutex::new(Vec::new()));
+                        let mut guard = mods.lock().unwrap();
+                        if !guard.contains(&kb.vkCode) {
+                            guard.push(kb.vkCode);
+                        }
+                    }
+                    if is_up && is_modifier(kb.vkCode) {
+                        let mods = PRESSED_MODS.get_or_init(|| Mutex::new(Vec::new()));
+                        let mut guard = mods.lock().unwrap();
+                        guard.retain(|&v| v != kb.vkCode);
+                    }
+
+                    // 按下主键时，检查修饰键是否齐全
+                    if is_down && !is_modifier(kb.vkCode) {
+                        if main_key_name(kb.vkCode) == *key {
+                            let mods = PRESSED_MODS.get_or_init(|| Mutex::new(Vec::new()));
+                            let guard = mods.lock().unwrap();
+                            // 收集当前按下的修饰键名
+                            let mut pressed_names: Vec<&str> = guard
+                                .iter()
+                                .filter_map(|&v| vk_to_name(v))
+                                .collect();
+                            pressed_names.sort();
+                            let mut want_names: Vec<&str> =
+                                modifiers.iter().map(|s| s.as_str()).collect();
+                            want_names.sort();
+
+                            if pressed_names == want_names {
+                                TOGGLE.store(true, Ordering::SeqCst);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -516,6 +624,7 @@ mod double_alt {
     }
 }
 
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -531,8 +640,18 @@ pub fn run() {    let app = tauri::Builder::default()
                 }
             }
         }))
-        .invoke_handler(tauri::generate_handler![scan_apps, launch_app, get_icon, hide_window])
+        .invoke_handler(tauri::generate_handler![
+            scan_apps,
+            launch_app,
+            get_icon,
+            hide_window,
+            config::get_config,
+            config::set_config,
+            config::set_autostart
+        ])
         .setup(|app| {
+            // 初始化配置（启动时加载一次）
+            config::init();
             #[cfg(windows)]
             {
                 use std::sync::atomic::Ordering;
