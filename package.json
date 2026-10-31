@@ -1,11 +1,13 @@
 {
   "name": "luma",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test:icons": "node --test scripts/icon-loader.test.cjs",
+    "test": "node --test scripts/*.test.cjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

@@ -1,35 +1,16 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { pinyin } from "pinyin-pro";
+import { listen } from "@tauri-apps/api/event";
+import { rankApps } from "./search";
+import { DiagnosticsPanel } from "./DiagnosticsPanel";
+import type { AppEntry, Config, HotkeyConfig, Usage, ScanResult, Diagnostics } from "./types";
+import { IconLoader, iconKey, type IconTarget } from "./iconLoader";
 import "./App.css";
 
-interface AppEntry {
-  name: string;
-  path: string;
-  icon: string | null;
-  hidden_reason?: string | null;
-}
+const AUTO_SCAN_INTERVAL = 5 * 60 * 1000;
+const WAKE_SCAN_INTERVAL = 60 * 1000;
 
-// 与后端 config.rs 对应的配置类型
-interface HotkeyCombo {
-  mode: "combo";
-  modifiers: string[]; // ["ctrl","alt","shift"]
-  key: string; // 主键，如 "space" / "a" / "f1"
-}
-type HotkeyConfig = HotkeyCombo;
-
-interface Config {
-  hotkey: HotkeyConfig;
-  autostart: boolean;
-  appearance: {
-    opacity: number;
-    corner_radius: number;
-  };
-  show_all?: boolean;
-}
-
-// 快捷键的可读显示名
 function hotkeyLabel(h: HotkeyConfig): string {
   const modNames: Record<string, string> = { ctrl: "Ctrl", alt: "Alt", shift: "Shift", meta: "Win" };
   const mods = h.modifiers.map((m) => modNames[m] ?? m).join(" + ");
@@ -41,42 +22,83 @@ function App() {
   const [apps, setApps] = useState<AppEntry[]>([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [iconRevision, setIconRevision] = useState(0);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [diagnosticId, setDiagnosticId] = useState<string | null>(null);
+  const [snapshot, setSnapshot] = useState<Diagnostics | null>(null);
   const [config, setConfig] = useState<Config | null>(null);
   const [capturing, setCapturing] = useState(false);
   const [hotkeyDraft, setHotkeyDraft] = useState<HotkeyConfig | null>(null);
+  const [extraDirDraft, setExtraDirDraft] = useState("");
+  const [activeCategory, setActiveCategory] = useState<string>("全部");
+  const [categoryDraft, setCategoryDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
-  const appWindow = getCurrentWindow();
+  const scanInFlight = useRef<Promise<void> | null>(null);
+  const scanPending = useRef(false);
+  const forcePending = useRef(false);
+  const lastScanAt = useRef<number | null>(null);
+  const catalogRevision = useRef<number | null>(null);
+  const iconLoader = useRef<IconLoader | null>(null);
+  if (!iconLoader.current) {
+    iconLoader.current = new IconLoader(
+      (app) => invoke<string | null>("get_icon", {
+        path: app.path,
+        shortcutPath: app.shortcut_path ?? null,
+      }),
+      (key, icon) => setApps((prev) => prev.map((app) =>
+        iconKey(app) === key && app.icon !== icon ? { ...app, icon } : app
+      )),
+    );
+  }
 
-  // 扫描应用（首次加载时执行一次）
-  const scan = useCallback(async () => {
-    try {
-      const result = await invoke<AppEntry[]>("scan_apps");
-      setApps(result);
-      loadIcons(result);
-    } catch (e) {
-      console.error("扫描失败", e);
-    } finally {
-      setLoading(false);
+  useEffect(() => () => iconLoader.current?.reset(), []);
+
+  // 共用一个扫描任务；目录变更发生在扫描中时，再补扫一次。
+  const scan = useCallback((rescan = false, changed = false): Promise<void> => {
+    if (scanInFlight.current) {
+      if (rescan || changed) scanPending.current = true;
+      if (rescan) forcePending.current = true;
+      return scanInFlight.current;
     }
-  }, []);
-
-  // 逐个异步加载图标
-  const loadIcons = useCallback(async (list: AppEntry[]) => {
-    for (const app of list) {
+    setRefreshing(true);
+    const task = Promise.resolve().then(async () => {
+      let force = rescan;
       try {
-        const icon = await invoke<string | null>("get_icon", { path: app.path });
-        if (icon) {
-          setApps((prev) =>
-            prev.map((a) => (a.path === app.path ? { ...a, icon } : a))
-          );
-        }
-      } catch {
-        // 单个图标加载失败忽略
+        do {
+          scanPending.current = false;
+          try {
+            const result = await invoke<ScanResult>("scan_apps", { force });
+            if (catalogRevision.current !== result.report.revision) {
+              catalogRevision.current = result.report.revision;
+              iconLoader.current?.reset();
+              setApps((prev) => {
+                const icons = new Map(prev.map((app) => [iconKey(app), app.icon]));
+                return result.apps.map((app) => ({ ...app, icon: icons.get(iconKey(app)) ?? app.icon }));
+              });
+              setIconRevision((revision) => revision + 1);
+            }
+            setScanError(null);
+          } catch (e) {
+            console.error("扫描失败", e);
+            setScanError("扫描失败，请点击刷新重试");
+          }
+          force = forcePending.current;
+          forcePending.current = false;
+        } while (scanPending.current);
+      } finally {
+        lastScanAt.current = Date.now();
+        scanInFlight.current = null;
+        setLoading(false);
+        setRefreshing(false);
       }
-    }
+    });
+    scanInFlight.current = task;
+    return task;
   }, []);
 
   // 加载配置
@@ -89,11 +111,57 @@ function App() {
     }
   }, []);
 
+  const refreshDiagnostics = useCallback(async () => {
+    try { setSnapshot(await invoke<Diagnostics>("get_diagnostics")); }
+    catch (error) { console.error("读取诊断失败", error); }
+  }, []);
+  const openDiagnostics = (id: string | null) => {
+    setDiagnosticId(id); setDiagnosticsOpen(true); setSettingsOpen(false);
+    void refreshDiagnostics();
+  };
+
+  useEffect(() => { if (settingsOpen) void refreshDiagnostics(); }, [settingsOpen, refreshDiagnostics]);
+
   useEffect(() => {
-    scan();
-    loadConfig();
-    setTimeout(() => inputRef.current?.focus(), 100);
-  }, [scan, loadConfig]);
+    void scan();
+    void loadConfig();
+    void refreshDiagnostics();
+    const focusTimer = setTimeout(() => inputRef.current?.focus(), 100);
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    const listeners: (() => void)[] = [];
+    const subscribe = (name: string, handler: () => void) => {
+      void listen(name, () => { if (!disposed) handler(); }).then((stop) => {
+        if (disposed) stop(); else listeners.push(stop);
+      }).catch((error) => console.error(`监听 ${name} 失败`, error));
+    };
+    subscribe("apps-changed", () => void scan(false, true));
+    subscribe("refresh-apps", () => void scan(true));
+    subscribe("open-settings", () => { setDiagnosticsOpen(false); setSettingsOpen(true); });
+    subscribe("open-diagnostics", () => openDiagnostics(null));
+    void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (!disposed && focused &&
+        (lastScanAt.current === null || Date.now() - lastScanAt.current >= WAKE_SCAN_INTERVAL)) {
+        void scan();
+      }
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    }).catch((e) => console.error("监听窗口唤醒失败", e));
+    return () => {
+      disposed = true;
+      clearTimeout(focusTimer);
+      unlisten?.();
+      listeners.forEach((stop) => stop());
+    };
+  }, [scan, loadConfig, refreshDiagnostics]);
+
+  // 每次扫描完成后重新计时，唤醒刷新不会与旧定时任务挤在一起。
+  useEffect(() => {
+    if (refreshing) return;
+    const timer = window.setTimeout(() => void scan(), AUTO_SCAN_INTERVAL);
+    return () => window.clearTimeout(timer);
+  }, [refreshing, scan]);
 
   // 全局监听 Esc：无论焦点落在哪个元素（输入框、复选框、甚至 body），
   // 都能可靠关闭窗口，避免依赖 DOM 冒泡导致的 Esc 失效。
@@ -105,7 +173,7 @@ function App() {
     };
     window.addEventListener("keydown", onGlobalKeyDown);
     return () => window.removeEventListener("keydown", onGlobalKeyDown);
-  }, [settingsOpen, capturing]);
+  }, [settingsOpen, diagnosticsOpen, capturing]);
 
   // 应用外观配置到 CSS 变量
   useEffect(() => {
@@ -119,18 +187,32 @@ function App() {
   const saveConfig = async (cfg: Config) => {
     try {
       await invoke("set_config", { cfg });
-      setConfig(cfg);
+      setConfig((current) => current ? { ...current, appearance: cfg.appearance, hotkey: cfg.hotkey } : cfg);
     } catch (e) {
       console.error("保存配置失败", e);
       alert(`保存配置失败: ${e}`);
     }
   };
 
+  // 保存额外扫描目录列表
+  const saveExtraDirs = async (dirs: string[]) => {
+    try {
+      await invoke("set_extra_dirs", { dirs });
+      setConfig((c) => (c ? { ...c, extra_dirs: dirs } : c));
+      // 目录变更后重新扫描应用
+      void scan(true);
+    } catch (e) {
+      console.error("保存额外目录失败", e);
+      alert(`保存额外目录失败: ${e}`);
+    }
+  };
+
   // 启动应用
   const launch = async (app: AppEntry, admin: boolean = false) => {
     try {
-      await invoke("launch_app", { path: app.path, admin });
-      await appWindow.hide();
+      const result = await invoke<{ usage: Usage | null }>("launch_app", { appId: app.id, admin });
+      if (result.usage) setConfig((current) => current ? { ...current, usage: { ...current.usage, [app.id]: result.usage! } } : current);
+      await invoke("hide_window");
       setQuery("");
     } catch (e) {
       console.error("启动失败", e);
@@ -138,8 +220,73 @@ function App() {
     }
   };
 
+  // 手动设置应用分类
+  const setAppCategory = async (appId: string, category: string) => {
+    try {
+      await invoke("set_app_category", { appId, category });
+      setConfig((c) => {
+        if (!c) return c;
+        const appCategories = { ...(c.app_categories ?? {}) };
+        appCategories[appId] = category;
+        return { ...c, app_categories: appCategories };
+      });
+    } catch (e) {
+      console.error("设置分类失败", e);
+      alert(`设置分类失败: ${e}`);
+    }
+  };
+
+  const togglePinned = async (app: AppEntry) => {
+    try { setConfig(await invoke<Config>("set_app_pinned", { appId: app.id, pinned: !config?.pinned_apps?.includes(app.id) })); }
+    catch (error) { alert(`设置置顶失败: ${error}`); }
+  };
+  const toggleHidden = async (app: AppEntry) => {
+    try { setConfig(await invoke<Config>("set_app_hidden", { appId: app.id, hidden: !config?.hidden_apps?.includes(app.id) })); }
+    catch (error) { alert(`设置隐藏失败: ${error}`); }
+  };
+
+  // 添加自定义分类
+  const addCustomCategory = async (name: string) => {
+    try {
+      await invoke("add_custom_category", { name });
+      setConfig((c) =>
+        c
+          ? { ...c, custom_categories: [...new Set([...(c.custom_categories ?? []), name])] }
+          : c
+      );
+    } catch (e) {
+      console.error("添加分类失败", e);
+      alert(`添加分类失败: ${e}`);
+    }
+  };
+
+  // 删除自定义分类
+  const removeCustomCategory = async (name: string) => {
+    try {
+      await invoke("remove_custom_category", { name });
+      setConfig((c) => {
+        if (!c) return c;
+        const appCategories = { ...(c.app_categories ?? {}) };
+        Object.keys(appCategories).forEach((k) => {
+          if (appCategories[k] === name) delete appCategories[k];
+        });
+        return {
+          ...c,
+          custom_categories: (c.custom_categories ?? []).filter((x) => x !== name),
+          app_categories: appCategories,
+        };
+      });
+      if (activeCategory === name) setActiveCategory("全部");
+      // 显示分类由配置映射派生，删除映射后立即恢复自动分类。
+    } catch (e) {
+      console.error("删除分类失败", e);
+      alert(`删除分类失败: ${e}`);
+    }
+  };
+
   // 关闭启动器（含设置面板）
   const hideLauncher = () => {
+    if (diagnosticsOpen) { setDiagnosticsOpen(false); setTimeout(() => inputRef.current?.focus(), 0); return; }
     if (settingsOpen) {
       setSettingsOpen(false);
       setCapturing(false);
@@ -168,11 +315,22 @@ function App() {
     if (e.key === "Escape") {
       // Esc 已由全局 window 监听统一处理，这里 stopPropagation 防止重复触发
       e.stopPropagation();
+      hideLauncher();
       return;
     }
 
     // 设置面板打开时，不处理网格导航
-    if (settingsOpen) return;
+    if (settingsOpen || diagnosticsOpen) return;
+
+    // 搜索框以外的输入控件保留自己的键盘行为。
+    const target = e.target;
+    if (
+      target instanceof HTMLElement &&
+      target !== inputRef.current &&
+      (target.isContentEditable || target.closest("input, textarea, select, button"))
+    ) {
+      return;
+    }
 
     const cols = getColumnCount();
     if (e.key === "ArrowDown") {
@@ -237,47 +395,86 @@ function App() {
     return null;
   };
 
-  // 根据窗口宽度估算网格列数（用于方向键导航）
+  // 使用实际网格列数，随侧边栏和可用宽度变化。
   const getColumnCount = () => {
-    const width = window.innerWidth || 900;
-    return Math.max(1, Math.floor((width - 64) / 112));
+    const grid = gridRef.current;
+    if (!grid) return 1;
+    const columns = window.getComputedStyle(grid).gridTemplateColumns;
+    if (!columns || columns === "none") return 1;
+    return Math.max(1, columns.trim().split(/\s+/).length);
   };
 
-  // 拼音搜索：匹配名称、全拼、首字母
-  // 先过滤掉自动标记的噪音应用（除非勾选了"显示全部"）
-  const filtered = apps.filter((app) => {
-    // 自动过滤的噪音应用：默认隐藏，勾选"显示全部"后显示
-    if (app.hidden_reason && !(config?.show_all ?? false)) {
-      return false;
-    }
-    if (!query.trim()) return true;
-    const q = query.toLowerCase().trim();
-    const name = app.name.toLowerCase();
-    if (name.includes(q)) return true;
+  // 分类列表：固定的自动分类 + 用户自定义分类
+  const builtinCategories = ["游戏", "办公", "开发", "媒体", "社交", "浏览器", "其他"];
+  const categories = [
+    "全部",
+    ...builtinCategories,
+    ...(config?.custom_categories ?? []),
+  ];
+  const categorizedApps = useMemo(() => apps.map((app) => ({
+    ...app,
+    category: (config?.app_categories?.[app.id] ?? config?.app_categories?.[app.name]) || app.category || "其他",
+    hidden_reason: config?.hidden_apps?.includes(app.id) ? "手动隐藏" : app.hidden_reason,
+  })), [apps, config]);
+  const filtered = useMemo(() => rankApps(categorizedApps.filter((app) =>
+    (!app.hidden_reason || (config?.show_all ?? false)) &&
+    (activeCategory === "全部" || app.category === activeCategory)
+  ), query, config ?? {}), [categorizedApps, activeCategory, query, config]);
+  const selectedIndex = Math.max(0, filtered.findIndex((app) => app.id === selectedId));
+  const setSelectedIndex = (value: number | ((index: number) => number)) => {
+    const index = typeof value === "function" ? value(selectedIndex) : value;
+    setSelectedId(filtered[index]?.id ?? null);
+  };
 
-    try {
-      const fullPinyin = pinyin(app.name, { toneType: "none", type: "array" })
-        .join("")
-        .toLowerCase();
-      const firstLetters = pinyin(app.name, {
-        pattern: "first",
-        toneType: "none",
-        type: "array",
-      })
-        .join("")
-        .toLowerCase();
-
-      if (fullPinyin.includes(q) || firstLetters.includes(q)) return true;
-    } catch {
-      // 拼音转换失败则忽略
+  const iconTargets = JSON.stringify(filtered.map(({ path, shortcut_path }) => ({ path, shortcut_path })));
+  useEffect(() => {
+    const loader = iconLoader.current;
+    const grid = gridRef.current;
+    if (!loader || !grid) return;
+    const targets: IconTarget[] = JSON.parse(iconTargets);
+    const byKey = new Map(targets.map((app) => [iconKey(app), app]));
+    const visible = new Map<string, number>();
+    let disposed = false;
+    const publish = () => loader.setVisible([...visible].sort((a, b) => a[1] - b[1])
+      .map(([key]) => byKey.get(key)).filter((app): app is IconTarget => !!app));
+    let observer: IntersectionObserver | undefined;
+    if (typeof IntersectionObserver !== "undefined") {
+      observer = new IntersectionObserver((entries) => {
+        if (disposed) return;
+        const bounds = grid.getBoundingClientRect();
+        for (const entry of entries) {
+          const key = entry.target.getAttribute("data-icon-key");
+          if (!key) continue;
+          if (entry.isIntersecting) {
+            const rect = entry.boundingClientRect;
+            visible.set(key, rect.bottom > bounds.top && rect.top < bounds.bottom ? 0 : 1);
+          } else {
+            visible.delete(key);
+          }
+        }
+        publish();
+      }, { root: grid, rootMargin: "120px 0px" });
+      grid.querySelectorAll(".app-tile").forEach((tile) => observer!.observe(tile));
+    } else {
+      loader.setVisible(targets);
     }
-    return false;
-  });
+    const retryTimer = window.setInterval(() => loader.retry(), 30_000);
+    return () => {
+      disposed = true;
+      observer?.disconnect();
+      window.clearInterval(retryTimer);
+      loader.setVisible([]);
+    };
+  }, [iconTargets, iconRevision]);
 
   // 查询变化时重置选中
   useEffect(() => {
     setSelectedIndex(0);
-  }, [query]);
+  }, [query, activeCategory]);
+
+  useEffect(() => {
+    if (selectedId && !filtered.some((app) => app.id === selectedId)) setSelectedId(null);
+  }, [filtered, selectedId]);
 
   // 选中项变化时，滚动到可视区域
   useEffect(() => {
@@ -301,6 +498,15 @@ function App() {
           autoFocus
         />
         <button
+          className={`settings-btn refresh-btn${refreshing ? " refreshing" : ""}`}
+          onClick={() => void scan(true)}
+          disabled={refreshing}
+          aria-label={refreshing ? "正在扫描应用" : "刷新应用"}
+          title={scanError ?? (refreshing ? "正在扫描应用" : "刷新应用")}
+        >
+          <span aria-hidden="true">↻</span>
+        </button>
+        <button
           className="settings-btn"
           onClick={() => setSettingsOpen(true)}
           title="设置"
@@ -309,41 +515,114 @@ function App() {
         </button>
       </div>
 
-      <div className="app-grid" ref={gridRef}>
-        {loading ? (
-          <div className="hint">正在扫描应用...</div>
-        ) : filtered.length === 0 ? (
-          <div className="hint">没有找到匹配的应用</div>
-        ) : (
-          filtered.map((app, idx) => (
+      <div className="main-area">
+        {/* 分类侧边栏 */}
+        <div className="category-sidebar">
+          {categories.map((cat) => (
             <div
-              key={app.path + idx}
-              className={`app-tile${idx === selectedIndex ? " selected" : ""}`}
-              onClick={() => launch(app)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                launch(app, true);
+              key={cat}
+              className={`category-item${cat === activeCategory ? " active" : ""}`}
+              onClick={() => {
+                setActiveCategory(cat);
+                setQuery("");
+                setTimeout(() => inputRef.current?.focus(), 0);
               }}
-              onMouseEnter={() => setSelectedIndex(idx)}
-              title={`${app.name}\n单击启动 · 右键以管理员启动`}
+              title={cat}
             >
-              <div className="app-icon">
-                {app.icon ? (
-                  <img src={app.icon} alt={app.name} />
-                ) : (
-                  <div className="app-icon-fallback">
-                    {app.name.charAt(0).toUpperCase()}
-                  </div>
-                )}
-              </div>
-              <span className="app-name">{app.name}</span>
+              <span className="category-name">{cat}</span>
+              {cat !== "全部" && !builtinCategories.includes(cat) && (
+                <button
+                  className="category-remove"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeCustomCategory(cat);
+                  }}
+                  title={`删除分类 ${cat}`}
+                >
+                  ×
+                </button>
+              )}
             </div>
-          ))
-        )}
+          ))}
+          {/* 添加自定义分类 */}
+          <div className="category-add">
+            <input
+              type="text"
+              placeholder="新分类"
+              value={categoryDraft}
+              onChange={(e) => setCategoryDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (categoryDraft.trim()) {
+                    addCustomCategory(categoryDraft.trim());
+                    setCategoryDraft("");
+                  }
+                }
+              }}
+            />
+            <button
+              className="category-add-btn"
+              onClick={() => {
+                if (categoryDraft.trim()) {
+                  addCustomCategory(categoryDraft.trim());
+                  setCategoryDraft("");
+                }
+              }}
+              title="添加分类"
+            >
+              +
+            </button>
+          </div>
+        </div>
+
+        {/* 应用网格 */}
+        <div className="app-grid" ref={gridRef}>
+          {loading ? (
+            <div className="hint">正在扫描应用...</div>
+          ) : filtered.length === 0 ? (
+          <div className="hint">{scanError ?? "没有找到匹配的应用"}</div>
+          ) : (
+            filtered.map((app, idx) => (
+              <div
+                key={app.id}
+                data-icon-key={iconKey(app)}
+                className={`app-tile${idx === selectedIndex ? " selected" : ""}`}
+                onClick={() => launch(app)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  launch(app, true);
+                }}
+                onMouseEnter={() => setSelectedIndex(idx)}
+                title={`${app.name}\n${app.path}${app.arguments ? `\n${app.arguments}` : ""}\n单击启动 · 右键以管理员启动 · 当前分类：${app.category}`}
+              >
+                <div className="tile-actions" onContextMenu={(event) => event.stopPropagation()}>
+                  <button className={config?.pinned_apps?.includes(app.id) ? "pinned" : ""}
+                    aria-label={`${config?.pinned_apps?.includes(app.id) ? "取消置顶" : "置顶"} ${app.name}`}
+                    title="常用应用置顶" onClick={(event) => { event.stopPropagation(); void togglePinned(app); }}>★</button>
+                  <button aria-label={`查看 ${app.name} 详情`} title="应用详情与诊断"
+                    onClick={(event) => { event.stopPropagation(); openDiagnostics(app.id); }}>ⓘ</button>
+                </div>
+                <div className="app-icon">
+                  {app.icon ? (
+                    <img src={app.icon} alt={app.name} />
+                  ) : (
+                    <div className="app-icon-fallback">
+                      {app.name.charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                </div>
+                <span className="app-name">{app.name}</span>
+              </div>
+            ))
+          )}
+        </div>
       </div>
 
       <div className="footer-hint">
         <span>单击启动 · 右键管理员 · ↑↓←→ 导航 · Ctrl+回车 管理员 · Esc 隐藏</span>
+        <button className="footer-link" onClick={() => openDiagnostics(null)}>应用诊断</button>
         <label className="show-all-toggle" title="勾选后显示被自动过滤的卸载程序、命令行工具等">
           <input
             type="checkbox"
@@ -377,6 +656,16 @@ function App() {
               <button className="settings-close" onClick={() => hideLauncher()}>
                 ×
               </button>
+            </div>
+
+            <div className="settings-section">
+              <div className="settings-label">Luma {snapshot?.version ?? "1.2.0"}</div>
+              <div className="runtime-path" title={snapshot?.executable}>{snapshot?.executable ?? "正在读取运行信息…"}</div>
+              <div className="panel-actions">
+                <button className="btn" onClick={() => openDiagnostics(null)}>应用诊断</button>
+                <button className="btn" onClick={() => void invoke("restart_app")}>重新启动</button>
+                <button className="btn" onClick={() => void invoke("quit_app")}>退出 Luma</button>
+              </div>
             </div>
 
             {/* 唤醒快捷键 */}
@@ -501,9 +790,97 @@ function App() {
                 </span>
               </div>
             </div>
+
+            {/* 额外扫描目录 */}
+            <div className="settings-section">
+              <div className="settings-label">额外扫描目录</div>
+              <div className="settings-hint">
+                绿色版游戏等未注册到开始菜单的程序目录（如 D:\game），将自动扫描其中的 exe
+              </div>
+              <div className="extra-dirs-list">
+                {(config.extra_dirs ?? []).map((dir, i) => (
+                  <div className="extra-dir-item" key={i}>
+                    <span className="extra-dir-path" title={dir}>{dir}</span>
+                    <button
+                      className="btn btn-sm"
+                      onClick={() =>
+                        saveExtraDirs((config.extra_dirs ?? []).filter((_, j) => j !== i))
+                      }
+                    >
+                      移除
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <div className="settings-row">
+                <input
+                  type="text"
+                  className="extra-dir-input"
+                  placeholder="输入目录路径，如 D:\game"
+                  value={extraDirDraft}
+                  onChange={(e) => setExtraDirDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && extraDirDraft.trim()) {
+                      saveExtraDirs([...(config.extra_dirs ?? []), extraDirDraft.trim()]);
+                      setExtraDirDraft("");
+                    }
+                  }}
+                />
+                <button
+                  className="btn btn-primary"
+                  onClick={() => {
+                    if (extraDirDraft.trim()) {
+                      saveExtraDirs([...(config.extra_dirs ?? []), extraDirDraft.trim()]);
+                      setExtraDirDraft("");
+                    }
+                  }}
+                >
+                  添加
+                </button>
+              </div>
+            </div>
+
+            {/* 应用分类管理 */}
+            <div className="settings-section">
+              <div className="settings-label">应用分类</div>
+              <div className="settings-hint">
+                为应用手动指定分类（覆盖自动分类）。自动分类：游戏/办公/开发/媒体/社交/浏览器/其他
+              </div>
+              <div className="category-app-list">
+                {categorizedApps
+                  .filter((a) => !a.hidden_reason || config.show_all)
+                  .map((app) => {
+                    const current = config.app_categories?.[app.id] ?? config.app_categories?.[app.name] ?? "";
+                    return (
+                      <div className="category-app-item" key={app.id}>
+                        <span className="category-app-name" title={`${app.path}\n${app.arguments}`}>
+                          {app.name}
+                        </span>
+                        <select
+                          className="category-app-select"
+                          value={current}
+                          onChange={(e) => setAppCategory(app.id, e.target.value)}
+                        >
+                          <option value="">自动分类</option>
+                          {[...builtinCategories, ...(config.custom_categories ?? [])].map(
+                            (cat) => (
+                              <option key={cat} value={cat}>
+                                {cat}
+                              </option>
+                            )
+                          )}
+                        </select>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
           </div>
         </div>
       )}
+      {diagnosticsOpen && <DiagnosticsPanel key={diagnosticId ?? "all"} apps={categorizedApps} config={config}
+        snapshot={snapshot} initialId={diagnosticId} onClose={() => { setDiagnosticsOpen(false); setTimeout(() => inputRef.current?.focus(), 0); }}
+        onRefresh={() => void refreshDiagnostics()} onPin={(app) => void togglePinned(app)} onHide={(app) => void toggleHidden(app)}/>}
     </div>
   );
 }

@@ -1,26 +1,29 @@
-use serde::Serialize;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+mod catalog;
 mod config;
+mod diagnostics;
+mod discovery;
+#[cfg(windows)]
+mod icon_resource;
+mod icons;
+mod launch;
+mod runtime;
+mod watcher;
 
-#[derive(Serialize, Clone)]
-struct AppEntry {
-    name: String,
-    path: String,
-    /// 图标的 base64 data URL（如 "data:image/png;base64,..."），提取失败则为 None
-    icon: Option<String>,
-    /// 非 None 表示被自动过滤（噪音应用），值为过滤原因，前端据此提供"手动显示"入口
-    hidden_reason: Option<String>,
-}
+mod model;
+use model::AppEntry;
 
 /// 扫描应用：开始菜单 .lnk + 注册表 App Paths
 #[tauri::command]
-fn scan_apps() -> Vec<AppEntry> {
-    let mut apps: Vec<AppEntry> = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
+async fn scan_apps(force: Option<bool>) -> Result<catalog::ScanResult, String> {
+    tauri::async_runtime::spawn_blocking(move || catalog::scan(force.unwrap_or(false)))
+        .await
+        .map_err(|e| format!("扫描应用失败: {}", e))
+}
 
-    // 1. 扫描开始菜单（用户 + 公共）
+fn start_menu_dirs() -> Vec<PathBuf> {
     let mut start_dirs: Vec<PathBuf> = Vec::new();
     if let Ok(programs) = std::env::var("APPDATA") {
         start_dirs.push(PathBuf::from(programs).join("Microsoft/Windows/Start Menu/Programs"));
@@ -29,24 +32,188 @@ fn scan_apps() -> Vec<AppEntry> {
         start_dirs.push(PathBuf::from(program_data).join("Microsoft/Windows/Start Menu/Programs"));
     }
 
-    for dir in start_dirs {
-        let pattern = dir.join("**/*.lnk").to_string_lossy().to_string();
-        if let Ok(paths) = glob::glob(&pattern) {
-            for entry in paths.flatten() {
-                if let Some(app) = parse_lnk(&entry) {
-                    if seen.insert(app.name.to_lowercase()) {
-                        apps.push(app);
+    start_dirs
+}
+
+fn scan_source(source: usize) -> Vec<AppEntry> {
+    let mut apps = Vec::new();
+    let mut seen = HashSet::new();
+    if source == 0 {
+        for dir in start_menu_dirs() {
+            let pattern = dir.join("**/*.lnk").to_string_lossy().to_string();
+            if let Ok(paths) = glob::glob(&pattern) {
+                for entry in paths.flatten() {
+                    if let Some(app) = parse_lnk(&entry) {
+                        if seen.insert(app.id.clone()) {
+                            apps.push(app);
+                        }
+                    } else {
+                        diagnostics::record(
+                            "扫描",
+                            &entry.to_string_lossy(),
+                            None,
+                            "快捷方式无法解析或目标不存在",
+                        );
                     }
                 }
             }
         }
     }
+    if source == 1 {
+        discovery::scan_app_paths(&mut apps, &mut seen);
 
-    // 2. 扫描注册表 App Paths（补充未在开始菜单的程序）
-    scan_app_paths(&mut apps, &mut seen);
+        // 3. 用户级和系统级安装记录（含没有快捷方式的应用）
+        discovery::scan_installed_apps(&mut apps, &mut seen);
+    }
+    if source == 2 {
+        scan_game_dirs(&mut apps, &mut seen);
+    }
+
+    // 保留自动分类，前端根据配置映射显示手动分类，避免分类变更触发磁盘扫描。
 
     apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     apps
+}
+
+/// 扫描游戏目录（绿色版游戏等），递归找 exe 并作为应用加入。
+/// 目录来源：常见游戏目录 + 用户配置的 extra_dirs。
+fn scan_game_dirs(apps: &mut Vec<AppEntry>, seen: &mut HashSet<String>) {
+    for root in game_roots() {
+        scan_dir_exes(&root, 8, apps, seen);
+    }
+}
+
+fn game_roots() -> Vec<PathBuf> {
+    // 常见游戏目录（各盘符根目录下）
+    let mut roots: Vec<PathBuf> = Vec::new();
+
+    // 1. 用户配置的额外目录
+    for dir in &config::get().extra_dirs {
+        let p = PathBuf::from(dir);
+        if p.is_dir() {
+            roots.push(p);
+        }
+    }
+
+    // 2. 常见游戏目录：各盘符的 game / Games / 游戏 目录
+    for drive in b'A'..=b'Z' {
+        let letter = drive as char;
+        let base = format!("{}:\\", letter);
+        for name in ["game", "Games", "Game", "游戏"] {
+            let p = PathBuf::from(&base).join(name);
+            if p.is_dir() {
+                roots.push(p);
+            }
+        }
+    }
+
+    // 去重 roots
+    let mut seen_roots = HashSet::new();
+    roots
+        .into_iter()
+        .filter(|root| seen_roots.insert(root.to_string_lossy().to_lowercase()))
+        .collect()
+}
+
+/// 递归扫描目录下的 exe（限制深度），加入应用列表
+fn scan_dir_exes(dir: &PathBuf, depth: u32, apps: &mut Vec<AppEntry>, seen: &mut HashSet<String>) {
+    if depth == 0 {
+        return;
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(error) => {
+            diagnostics::record("扫描", &dir.to_string_lossy(), None, error.to_string());
+            return;
+        }
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            // 跳过明显的系统/无关目录，避免误扫
+            let dir_name = entry.file_name().to_string_lossy().to_lowercase();
+            if dir_name == "lib" || dir_name == "node_modules" {
+                continue;
+            }
+            scan_dir_exes(&path, depth - 1, apps, seen);
+        } else if path.extension().map(|e| e.to_string_lossy().to_lowercase())
+            == Some("exe".to_string())
+        {
+            let exe_name = path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            // 跳过明显的工具类 exe（安装器、卸载器、启动器辅助等）
+            if is_noise_exe(&exe_name) {
+                diagnostics::record(
+                    "过滤",
+                    &path.to_string_lossy(),
+                    None,
+                    "安装、卸载或辅助程序",
+                );
+                continue;
+            }
+            let full = path.to_string_lossy().to_string();
+            // 用版本资源 FileDescription 取友好名，回退文件名（并清理 UE4 后缀）
+            #[cfg(windows)]
+            let name = friendly_name(&full).unwrap_or_else(|| clean_game_name(&exe_name));
+            #[cfg(not(windows))]
+            let name = clean_game_name(&exe_name);
+
+            let mut app = AppEntry::new(name, full, "目录扫描", dir.to_string_lossy().to_string());
+            app.category = "游戏".into();
+            if seen.insert(app.id.clone()) {
+                apps.push(app);
+            }
+        }
+    }
+}
+
+/// 清理游戏 exe 文件名中的引擎后缀，得到干净的显示名。
+/// 如 "BeastOfReincarnation-Win64-Shipping" → "BeastOfReincarnation"
+fn clean_game_name(exe_name: &str) -> String {
+    let mut name = exe_name.to_string();
+    // UE4 常见后缀
+    for suffix in [
+        "-win64-shipping",
+        "-win64",
+        "-shipping",
+        "-win32-shipping",
+        "-win32",
+        "-windowsnoeditor",
+    ] {
+        if let Some(idx) = name.to_lowercase().rfind(suffix) {
+            name.truncate(idx);
+            break;
+        }
+    }
+    name
+}
+
+/// 判断 exe 文件名是否是"工具类"噪音（安装器、卸载器等），应跳过
+fn is_noise_exe(name: &str) -> bool {
+    let n = name.to_lowercase();
+    n.contains("install")
+        || n.contains("setup")
+        || n.contains("uninstall")
+        || n.contains("unins")
+        || n.contains("update")
+        || n.contains("patcher")
+        || n.contains("config")
+        || n.contains("unwise")
+        || n.contains("crashreport")
+        || n.contains("crash_report")
+        || n.contains("unrealpak")
+        || n.contains("redist")
+        || n.contains("dxsetup")
+        || n.contains("vc_redist")
+        || n.contains("dxwebsetup")
+        || n.contains("-worker")
+        || n.contains("_worker")
+        || n.contains("安装")
+        || n.contains("卸载")
 }
 
 /// 判断一个应用是否为"噪音"（卸载程序、命令行工具、帮助文档、修复工具等）。
@@ -54,6 +221,38 @@ fn scan_apps() -> Vec<AppEntry> {
 fn classify_noise(name: &str, path: &str) -> Option<String> {
     let name_lower = name.to_lowercase();
     let path_lower = path.to_lowercase();
+    let stem = std::path::Path::new(path)
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_lowercase();
+    if [
+        "anticheatexpert",
+        "easyanticheat",
+        "battleye",
+        "crashpad_handler",
+    ]
+    .contains(&stem.as_str())
+        || ["anticheatexpert", "easyanticheat", "battleye"].contains(&name_lower.trim())
+        || stem.starts_with("crashreport")
+        || stem.ends_with("_helper")
+        || stem.ends_with("-helper")
+    {
+        return Some("后台辅助组件".into());
+    }
+    if name_lower.contains("redistributable")
+        || name_lower.contains(".net host")
+        || name_lower.contains("desktop runtime")
+    {
+        return Some("运行库组件".into());
+    }
+    if ["官方网站", "意见反馈", "打字入门", "皮肤下载", "细胞词库"].contains(&name_lower.trim())
+        && [".url", ".html", ".htm"]
+            .iter()
+            .any(|extension| path_lower.ends_with(extension))
+    {
+        return Some("附属网页或文档".into());
+    }
 
     // 卸载程序（最常见噪音）
     if name_lower.contains("uninstall")
@@ -116,6 +315,150 @@ fn classify_noise(name: &str, path: &str) -> Option<String> {
     None
 }
 
+#[cfg(test)]
+mod noise_tests {
+    #[test]
+    fn recognizes_component_display_names_without_hiding_real_launchers() {
+        assert_eq!(
+            super::classify_noise("AntiCheatExpert", r"C:\Games\ACE-Setup64.exe").as_deref(),
+            Some("后台辅助组件")
+        );
+        assert_eq!(
+            super::classify_noise("官方网站", r"C:\Apps\Sogou Pinyin Ime.url").as_deref(),
+            Some("附属网页或文档")
+        );
+        assert!(super::classify_noise("官方网站", r"C:\Apps\SiteBuilder.exe").is_none());
+        assert!(super::classify_noise("WeGame", r"C:\WeGame\WeGameLauncher.exe").is_none());
+    }
+}
+
+/// 自动分类：根据应用名和路径判断所属分类。
+/// 返回分类名字符串（中文），用于侧边栏分组。
+fn auto_category(name: &str, path: &str) -> String {
+    let name_lower = name.to_lowercase();
+    let path_lower = path.to_lowercase();
+
+    // 游戏特征：路径含 game/steam/epic 等，或名字含游戏相关词
+    if path_lower.contains("\\game")
+        || path_lower.contains("\\games")
+        || path_lower.contains("steam")
+        || path_lower.contains("\\epic games")
+        || path_lower.contains("\\gog games")
+        || path_lower.contains("wegame")
+        || name_lower.contains("game")
+        || name_lower.contains("游戏")
+    {
+        return "游戏".to_string();
+    }
+
+    // 开发工具
+    if name_lower.contains("visual studio")
+        || name_lower.starts_with("trae")
+        || name_lower.contains("code")
+        || name_lower.contains("jetbrains")
+        || name_lower.contains("intellij")
+        || name_lower.contains("pycharm")
+        || name_lower.contains("webstorm")
+        || name_lower.contains("goland")
+        || name_lower.contains("clion")
+        || name_lower.contains("rider")
+        || name_lower.contains("android studio")
+        || name_lower.contains("git")
+        || name_lower.contains("node")
+        || name_lower.contains("python")
+        || name_lower.contains("rust")
+        || name_lower.contains("golang")
+        || name_lower.contains("terminal")
+        || name_lower.contains("powershell")
+        || name_lower.contains("cmd")
+        || name_lower.contains("docker")
+        || name_lower.contains("数据库")
+        || name_lower.contains("database")
+        || name_lower.contains("sql")
+        || name_lower.contains("postman")
+        || name_lower.contains("开发")
+    {
+        return "开发".to_string();
+    }
+
+    // 办公
+    if name_lower.contains("word")
+        || name_lower.contains("excel")
+        || name_lower.contains("powerpoint")
+        || name_lower.contains("outlook")
+        || name_lower.contains("office")
+        || name_lower.contains("wps")
+        || name_lower.contains("pdf")
+        || name_lower.contains("邮箱")
+        || name_lower.contains("mail")
+        || name_lower.contains("会议")
+        || name_lower.contains("钉钉")
+        || name_lower.contains("企业微信")
+        || name_lower.contains("飞书")
+        || name_lower.contains("notion")
+        || name_lower.contains("笔记")
+        || name_lower.contains("待办")
+        || name_lower.contains("日历")
+        || name_lower.contains("办公")
+    {
+        return "办公".to_string();
+    }
+
+    // 媒体 / 影音
+    if name_lower.contains("player")
+        || name_lower.contains("播放器")
+        || name_lower.contains("music")
+        || name_lower.contains("音乐")
+        || name_lower.contains("video")
+        || name_lower.contains("视频")
+        || name_lower.contains("photo")
+        || name_lower.contains("图片")
+        || name_lower.contains("图像")
+        || name_lower.contains("剪辑")
+        || name_lower.contains("photoshop")
+        || name_lower.contains("premiere")
+        || name_lower.contains("剪映")
+        || name_lower.contains("网易云")
+        || name_lower.contains("qq音乐")
+        || name_lower.contains("bilibili")
+        || name_lower.contains("爱奇艺")
+        || name_lower.contains("腾讯视频")
+        || name_lower.contains("优酷")
+        || name_lower.contains("potplayer")
+        || name_lower.contains("qq影音")
+    {
+        return "媒体".to_string();
+    }
+
+    // 社交 / 通讯
+    if name_lower.contains("微信")
+        || name_lower.contains("wechat")
+        || name_lower.contains("qq")
+        || name_lower.contains("telegram")
+        || name_lower.contains("discord")
+        || name_lower.contains("whatsapp")
+        || name_lower.contains("skype")
+        || name_lower.contains("微博")
+        || name_lower.contains("社交")
+        || name_lower.contains("聊天")
+    {
+        return "社交".to_string();
+    }
+
+    // 浏览器
+    if name_lower.contains("chrome")
+        || name_lower.contains("edge")
+        || name_lower.contains("firefox")
+        || name_lower.contains("浏览器")
+        || name_lower.contains("browser")
+    {
+        return "浏览器".to_string();
+    }
+
+    // 系统工具（默认兜底）
+    "其他".to_string()
+}
+
 /// 用 parselnk 解析 .lnk 快捷方式
 fn parse_lnk(lnk_path: &PathBuf) -> Option<AppEntry> {
     let name = lnk_path.file_stem()?.to_string_lossy().to_string();
@@ -126,56 +469,23 @@ fn parse_lnk(lnk_path: &PathBuf) -> Option<AppEntry> {
     // 解析真正的目标路径：优先 link_info 里的完整路径，再回退 relative_path
     let target_str = resolve_lnk_target(&shortcut, lnk_path)?;
 
-    // 注意：图标不在扫描阶段提取（避免阻塞），由前端通过 get_icon 命令异步加载
-    Some(AppEntry {
-        name: name.clone(),
-        path: target_str.clone(),
-        icon: None,
-        hidden_reason: classify_noise(&name, &target_str),
-    })
-}
-
-/// 图标提取缓存：path + 修改时间 → base64 data URL
-/// 避免每次启动都重新读取 exe 的 PE 资源并编码 base64
-#[cfg(windows)]
-static ICON_CACHE: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashMap<String, Option<String>>>,
-> = std::sync::OnceLock::new();
-
-/// 获取应用的图标（base64 data URL），带内存缓存。
-/// 供前端异步调用，避免扫描阶段阻塞 UI。
-#[tauri::command]
-fn get_icon(path: String) -> Option<String> {
-    #[cfg(windows)]
-    {
-        use std::collections::HashMap;
-        let cache = ICON_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
-
-        // 用路径 + 文件修改时间做缓存 key，文件更新后自动失效
-        let mtime = std::fs::metadata(&path)
-            .and_then(|m| m.modified())
-            .map(|t| format!("{:?}", t))
-            .unwrap_or_default();
-        let cache_key = format!("{}|{}", path, mtime);
-
-        // 先查缓存
-        if let Some(icon) = cache.lock().unwrap().get(&cache_key) {
-            return icon.clone();
-        }
-
-        // 提取图标
-        let icon = extract_icon_base64(&path);
-
-        // 写入缓存
-        cache.lock().unwrap().insert(cache_key, icon.clone());
-        icon
-    }
-
-    #[cfg(not(windows))]
-    {
-        let _ = path;
-        None
-    }
+    let mut app = AppEntry::new(
+        name,
+        target_str,
+        "开始菜单",
+        lnk_path.to_string_lossy().to_string(),
+    );
+    app.shortcut_path = Some(lnk_path.to_string_lossy().to_string());
+    app.arguments = shortcut
+        .arguments()
+        .unwrap_or_default()
+        .trim_end_matches('\0')
+        .to_string();
+    app.working_dir = shortcut
+        .working_dir()
+        .map(|p| p.to_string_lossy().trim_end_matches('\0').to_string());
+    app.update_identity();
+    Some(app)
 }
 
 /// 从 .lnk 中解析出完整的目标路径
@@ -225,60 +535,6 @@ fn resolve_lnk_target(shortcut: &parselnk::Lnk, lnk_path: &PathBuf) -> Option<St
     None
 }
 
-/// 从文件路径提取图标，返回 base64 data URL
-#[cfg(windows)]
-fn extract_icon_base64(path: &str) -> Option<String> {
-    use std::path::Path;
-    if !Path::new(path).exists() {
-        return None;
-    }
-    windows_icons::get_icon_base64_by_path_with_size(path, windows_icons::IconSize::Large)
-        .ok()
-        .map(|b64| format!("data:image/png;base64,{}", b64))
-}
-
-#[cfg(not(windows))]
-fn extract_icon_base64(_path: &str) -> Option<String> {
-    None
-}
-
-/// 扫描注册表 App Paths
-#[cfg(windows)]
-fn scan_app_paths(apps: &mut Vec<AppEntry>, seen: &mut HashSet<String>) {
-    use winreg::enums::HKEY_LOCAL_MACHINE;
-    use winreg::RegKey;
-
-    let app_paths = match RegKey::predef(HKEY_LOCAL_MACHINE)
-        .open_subkey("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths")
-    {
-        Ok(k) => k,
-        Err(_) => return,
-    };
-
-    for key in app_paths.enum_keys().flatten() {
-        if key.to_lowercase().ends_with(".exe") {
-            if let Ok(subkey) = app_paths.open_subkey(&key) {
-                if let Ok(path) = subkey.get_value::<String, _>("") {
-                    // 优先用 exe 版本资源里的 FileDescription 作为友好显示名
-                    // （如 "Google Chrome"、"Microsoft Edge"），失败则回退文件名
-                    let name = friendly_name(&path)
-                        .unwrap_or_else(|| key.trim_end_matches(".exe").to_string());
-
-                    if seen.insert(name.to_lowercase()) {
-                        let hidden_reason = classify_noise(&name, &path);
-                        apps.push(AppEntry {
-                            name,
-                            path,
-                            icon: None,
-                            hidden_reason,
-                        });
-                    }
-                }
-            }
-        }
-    }
-}
-
 /// 从 exe 的版本资源读取 FileDescription（友好显示名）
 #[cfg(windows)]
 fn friendly_name(path: &str) -> Option<String> {
@@ -323,7 +579,10 @@ fn friendly_name(path: &str) -> Option<String> {
                 && value_len > 0
             {
                 let slice = std::slice::from_raw_parts(value_ptr, value_len as usize);
-                let desc = String::from_utf16_lossy(slice).trim().to_string();
+                let desc = String::from_utf16_lossy(slice)
+                    .trim_end_matches('\0')
+                    .trim()
+                    .to_string();
                 if !desc.is_empty() {
                     return Some(desc);
                 }
@@ -335,19 +594,11 @@ fn friendly_name(path: &str) -> Option<String> {
 }
 
 #[cfg(not(windows))]
-fn scan_app_paths(_apps: &mut Vec<AppEntry>, _seen: &mut HashSet<String>) {}
-
-#[cfg(not(windows))]
 fn friendly_name(_path: &str) -> Option<String> {
     None
 }
 
 /// 启动应用（可选管理员权限）
-#[tauri::command]
-fn launch_app(path: String, admin: bool) -> Result<(), String> {
-    launch_with_shell_execute(&path, admin)
-}
-
 /// 前端请求隐藏窗口（Esc 主路径）。同步复位权威显示标志，避免与后端状态错乱。
 #[tauri::command]
 fn hide_window(app: tauri::AppHandle) {
@@ -359,63 +610,14 @@ fn hide_window(app: tauri::AppHandle) {
 }
 
 #[cfg(windows)]
-fn launch_with_shell_execute(path: &str, admin: bool) -> Result<(), String> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::UI::Shell::ShellExecuteW;
-    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-
-    let operation: Vec<u16> = if admin {
-        "runas\0".encode_utf16().collect()
-    } else {
-        "open\0".encode_utf16().collect()
-    };
-
-    let file: Vec<u16> = std::ffi::OsStr::new(path)
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
-
-    let result = unsafe {
-        ShellExecuteW(
-            std::ptr::null_mut(),
-            operation.as_ptr(),
-            file.as_ptr(),
-            std::ptr::null(),
-            std::ptr::null(),
-            SW_SHOWNORMAL as i32,
-        )
-    };
-
-    if (result as isize) > 32 {
-        Ok(())
-    } else {
-        Err(format!("启动失败，错误码: {}", result as isize))
-    }
-}
-
-#[cfg(not(windows))]
-fn launch_with_shell_execute(_path: &str, _admin: bool) -> Result<(), String> {
-    Err("当前平台不支持".to_string())
-}
-
-/// 强制窗口获得前台焦点（PowerToys Run 同款方案）
-///
-/// 参考 microsoft/PowerToys 的 MainWindow.BringProcessToForeground()：
-/// 发送一个"空鼠标事件"（INPUT_MOUSE 类型，鼠标数据全零），
-/// 使当前线程成为"最后一个发送输入"的线程，从而通过 Windows 前台权限检查，
-/// 随后 SetForegroundWindow / Activate 才能生效。
-/// 此方案比"模拟 Alt 键"更可靠：空鼠标事件不触发任何实际动作，
-/// 不会干扰键盘钩子，也不会激活前台窗口的菜单栏。
-/// 参考 issue: https://github.com/microsoft/PowerToys/issues/4270
-#[cfg(windows)]
 fn force_foreground(hwnd: isize) {
     use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, SetActiveWindow, SetFocus, INPUT, INPUT_0, INPUT_MOUSE, MOUSEINPUT,
+        INPUT, INPUT_0, INPUT_MOUSE, MOUSEINPUT, SendInput, SetActiveWindow, SetFocus,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetWindowThreadProcessId, SetForegroundWindow, SetWindowPos,
-        HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE,
+        GetForegroundWindow, GetWindowThreadProcessId, HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE,
+        SetForegroundWindow, SetWindowPos,
     };
 
     unsafe {
@@ -478,10 +680,10 @@ fn force_foreground(_hwnd: isize) {}
 #[cfg(windows)]
 fn disable_window_corner_and_shadow(hwnd: isize) {
     use windows_sys::Win32::Graphics::Dwm::{
-        DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
+        DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DwmSetWindowAttribute,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOREDIRECTIONBITMAP,
+        GWL_EXSTYLE, GetWindowLongPtrW, SetWindowLongPtrW, WS_EX_NOREDIRECTIONBITMAP,
     };
 
     unsafe {
@@ -500,7 +702,11 @@ fn disable_window_corner_and_shadow(hwnd: isize) {
         //    有些 WebView2 透明窗口需要这一步才能彻底消除四角残影
         let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         if ex_style != 0 {
-            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style & !(WS_EX_NOREDIRECTIONBITMAP as isize));
+            SetWindowLongPtrW(
+                hwnd,
+                GWL_EXSTYLE,
+                ex_style & !(WS_EX_NOREDIRECTIONBITMAP as isize),
+            );
         }
     }
 }
@@ -512,16 +718,16 @@ fn disable_window_corner_and_shadow(_hwnd: isize) {}
 
 #[cfg(windows)]
 mod double_alt {
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-        GetAsyncKeyState, RegisterHotKey, UnregisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT,
-        MOD_SHIFT, MOD_WIN, VK_ESCAPE,
+        GetAsyncKeyState, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, RegisterHotKey,
+        UnregisterHotKey, VK_ESCAPE,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW, MSG,
-        WNDCLASSW, HWND_MESSAGE, WM_HOTKEY,
+        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, HWND_MESSAGE, MSG,
+        RegisterClassW, WM_HOTKEY, WNDCLASSW,
     };
 
     use crate::config::Hotkey;
@@ -709,9 +915,9 @@ mod double_alt {
     }
 }
 
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {    let app = tauri::Builder::default()
+pub fn run() {
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // 已有实例在运行：唤醒它的窗口，新实例随后自动退出
@@ -727,17 +933,27 @@ pub fn run() {    let app = tauri::Builder::default()
         }))
         .invoke_handler(tauri::generate_handler![
             scan_apps,
-            launch_app,
-            get_icon,
+            launch::launch_app,
+            icons::get_icon,
             hide_window,
             config::get_config,
             config::set_config,
             config::set_autostart,
-            config::set_show_all
+            config::set_show_all,
+            config::set_extra_dirs,
+            config::set_app_category,
+            config::set_app_pinned,
+            config::set_app_hidden,
+            diagnostics::get_diagnostics,
+            runtime::quit_app,
+            runtime::restart_app,
+            config::add_custom_category,
+            config::remove_custom_category
         ])
         .setup(|app| {
             // 初始化配置（启动时加载一次）
             config::init();
+            runtime::setup(app)?;
             #[cfg(windows)]
             {
                 use std::sync::atomic::Ordering;
@@ -767,7 +983,8 @@ pub fn run() {    let app = tauri::Builder::default()
                                     // 再次确认是否仍失焦，且窗口当前"由我们主动显示"（权威标志）
                                     if let Ok(false) = win.is_focused() {
                                         if double_alt::WINDOW_VISIBLE.load(Ordering::SeqCst) {
-                                            double_alt::WINDOW_VISIBLE.store(false, Ordering::SeqCst);
+                                            double_alt::WINDOW_VISIBLE
+                                                .store(false, Ordering::SeqCst);
                                             let _ = win.hide();
                                         }
                                     }
@@ -792,48 +1009,48 @@ pub fn run() {    let app = tauri::Builder::default()
                         // Esc 物理键轮询的"上一次按下"状态，用于边沿检测（按下瞬间才触发一次）
                         let mut esc_prev_down = false;
                         loop {
-                        // 终极兜底：物理键盘轮询 Esc。即使 WebView2 焦点导致
-                        // 低级键盘钩子失聪、前端 keydown 收不到，这里也能捕获并隐藏。
-                        // 仅在窗口"由我们主动显示"时生效，避免后台误触发。
-                        if double_alt::WINDOW_VISIBLE.load(Ordering::SeqCst) {
-                            let esc_now_down = double_alt::esc_down();
-                            if esc_now_down && !esc_prev_down {
-                                double_alt::WINDOW_VISIBLE.store(false, Ordering::SeqCst);
+                            // 终极兜底：物理键盘轮询 Esc。即使 WebView2 焦点导致
+                            // 低级键盘钩子失聪、前端 keydown 收不到，这里也能捕获并隐藏。
+                            // 仅在窗口"由我们主动显示"时生效，避免后台误触发。
+                            if double_alt::WINDOW_VISIBLE.load(Ordering::SeqCst) {
+                                let esc_now_down = double_alt::esc_down();
+                                if esc_now_down && !esc_prev_down {
+                                    double_alt::WINDOW_VISIBLE.store(false, Ordering::SeqCst);
+                                    let win = win.clone();
+                                    let handle = handle.clone();
+                                    let _ = handle.run_on_main_thread(move || {
+                                        let _ = win.hide();
+                                    });
+                                }
+                                esc_prev_down = esc_now_down;
+                            } else {
+                                esc_prev_down = false;
+                            }
+
+                            // 处理唤醒热键：切换显示/隐藏
+                            if double_alt::TOGGLE.swap(false, Ordering::SeqCst) {
                                 let win = win.clone();
                                 let handle = handle.clone();
                                 let _ = handle.run_on_main_thread(move || {
-                                    let _ = win.hide();
+                                    if double_alt::WINDOW_VISIBLE.load(Ordering::SeqCst) {
+                                        // 当前显示 → 隐藏
+                                        double_alt::WINDOW_VISIBLE.store(false, Ordering::SeqCst);
+                                        let _ = win.hide();
+                                    } else {
+                                        // 当前隐藏 → 显示并抢焦点
+                                        double_alt::WINDOW_VISIBLE.store(true, Ordering::SeqCst);
+                                        let _ = win.show();
+
+                                        // 抢焦点必须在本闭包（主线程）内直接调用，
+                                        // 因为 SetFocus/SetActiveWindow/SetForegroundWindow
+                                        // 都要求从拥有窗口的 UI 线程执行
+                                        if let Ok(hwnd) = win.hwnd() {
+                                            force_foreground(hwnd.0 as isize);
+                                        }
+                                    }
                                 });
                             }
-                            esc_prev_down = esc_now_down;
-                        } else {
-                            esc_prev_down = false;
-                        }
-
-                        // 处理唤醒热键：切换显示/隐藏
-                        if double_alt::TOGGLE.swap(false, Ordering::SeqCst) {
-                            let win = win.clone();
-                            let handle = handle.clone();
-                            let _ = handle.run_on_main_thread(move || {
-                                if double_alt::WINDOW_VISIBLE.load(Ordering::SeqCst) {
-                                    // 当前显示 → 隐藏
-                                    double_alt::WINDOW_VISIBLE.store(false, Ordering::SeqCst);
-                                    let _ = win.hide();
-                                } else {
-                                    // 当前隐藏 → 显示并抢焦点
-                                    double_alt::WINDOW_VISIBLE.store(true, Ordering::SeqCst);
-                                    let _ = win.show();
-
-                                    // 抢焦点必须在本闭包（主线程）内直接调用，
-                                    // 因为 SetFocus/SetActiveWindow/SetForegroundWindow
-                                    // 都要求从拥有窗口的 UI 线程执行
-                                    if let Ok(hwnd) = win.hwnd() {
-                                        force_foreground(hwnd.0 as isize);
-                                    }
-                                }
-                            });
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(20));
+                            std::thread::sleep(std::time::Duration::from_millis(20));
                         }
                     });
                 } else {

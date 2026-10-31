@@ -1,6 +1,6 @@
 [package]
 name = "luma"
-version = "1.1.0"
+version = "1.2.0"
 description = "Luma — a lightweight macOS-style app launcher for Windows"
 authors = ["fengzhouxuan"]
 edition = "2024"
@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["custom-protocol"] }
+tauri = { version = "2", features = ["custom-protocol", "tray-icon"] }
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
@@ -27,6 +27,8 @@ glob = "0.3"
 winreg = "0.52"
 parselnk = "0.1.1"
 windows-icons = "0.4.0"
+base64 = "0.23"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
@@ -38,6 +40,8 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_System_LibraryLoader",
     "Win32_System_Threading",
+    "Win32_System_Registry",
+    "Win32_Security",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
 ] }
