@@ -4,6 +4,26 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.0] - 2026-10-31
+
+### 变更
+
+- **唤醒快捷键机制重构**：从低级键盘钩子 `WH_KEYBOARD_LL` 迁移到系统级热键 `RegisterHotKey`（PowerToys 同款方案），彻底解决 WebView2 焦点下钩子失聪导致的快捷键失效问题
+- **默认快捷键变更**：由「双击 `Alt`」改为「`Alt+Shift+Space`」（原双击单键模式移除；`Alt+Space` 与 Windows 系统菜单冲突，故采用三重组合键）
+- 快捷键支持在设置界面自定义为任意组合键（修饰键 + 主键）
+
+### 新增
+
+- 应用噪音过滤：自动隐藏卸载程序、命令行工具等，右下角新增「显示全部」复选框按需查看
+
+### 修复
+
+- 修复 Esc 关闭窗口失效：前端全局 keydown + 后端物理键盘轮询双兜底，任何焦点状态下均可关闭
+
+### 技术栈变更
+
+- Rust 后端：`RegisterHotKey` 系统级热键（替代 `WH_KEYBOARD_LL` 钩子）
+
 ## [1.0.0] - 2026-10-31
 
 ### 新增
