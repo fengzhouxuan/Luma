@@ -8,19 +8,16 @@ interface AppEntry {
   name: string;
   path: string;
   icon: string | null;
+  hidden_reason?: string | null;
 }
 
 // 与后端 config.rs 对应的配置类型
-interface HotkeyDouble {
-  mode: "double";
-  key: string; // alt / ctrl / shift
-}
 interface HotkeyCombo {
   mode: "combo";
   modifiers: string[]; // ["ctrl","alt","shift"]
   key: string; // 主键，如 "space" / "a" / "f1"
 }
-type HotkeyConfig = HotkeyDouble | HotkeyCombo;
+type HotkeyConfig = HotkeyCombo;
 
 interface Config {
   hotkey: HotkeyConfig;
@@ -29,14 +26,11 @@ interface Config {
     opacity: number;
     corner_radius: number;
   };
+  show_all?: boolean;
 }
 
 // 快捷键的可读显示名
 function hotkeyLabel(h: HotkeyConfig): string {
-  if (h.mode === "double") {
-    const names: Record<string, string> = { alt: "Alt", ctrl: "Ctrl", shift: "Shift" };
-    return `双击 ${names[h.key] ?? h.key}`;
-  }
   const modNames: Record<string, string> = { ctrl: "Ctrl", alt: "Alt", shift: "Shift", meta: "Win" };
   const mods = h.modifiers.map((m) => modNames[m] ?? m).join(" + ");
   const keyName = h.key.length === 1 ? h.key.toUpperCase() : h.key;
@@ -101,6 +95,18 @@ function App() {
     setTimeout(() => inputRef.current?.focus(), 100);
   }, [scan, loadConfig]);
 
+  // 全局监听 Esc：无论焦点落在哪个元素（输入框、复选框、甚至 body），
+  // 都能可靠关闭窗口，避免依赖 DOM 冒泡导致的 Esc 失效。
+  useEffect(() => {
+    const onGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      hideLauncher();
+    };
+    window.addEventListener("keydown", onGlobalKeyDown);
+    return () => window.removeEventListener("keydown", onGlobalKeyDown);
+  }, [settingsOpen, capturing]);
+
   // 应用外观配置到 CSS 变量
   useEffect(() => {
     if (!config) return;
@@ -160,8 +166,8 @@ function App() {
     }
 
     if (e.key === "Escape") {
-      e.preventDefault();
-      hideLauncher();
+      // Esc 已由全局 window 监听统一处理，这里 stopPropagation 防止重复触发
+      e.stopPropagation();
       return;
     }
 
@@ -204,16 +210,10 @@ function App() {
     const key = normalizeKey(e.key);
     if (!key) return null;
 
-    if (mods.length === 0) {
-      // 无修饰键：只能是"双击单键"模式，仅支持 alt/ctrl/shift
-      if (key === "alt" || key === "ctrl" || key === "shift") {
-        return { mode: "double", key };
-      }
-      // 其他单键（如字母）无修饰键不支持，忽略
-      return null;
-    }
+    // 必须至少有一个修饰键（RegisterHotKey 只支持组合键）
+    if (mods.length === 0) return null;
 
-    // 有修饰键：组合键模式，但主键不能是修饰键
+    // 主键不能是修饰键
     if (key === "alt" || key === "ctrl" || key === "shift" || key === "meta") {
       return null;
     }
@@ -244,7 +244,12 @@ function App() {
   };
 
   // 拼音搜索：匹配名称、全拼、首字母
+  // 先过滤掉自动标记的噪音应用（除非勾选了"显示全部"）
   const filtered = apps.filter((app) => {
+    // 自动过滤的噪音应用：默认隐藏，勾选"显示全部"后显示
+    if (app.hidden_reason && !(config?.show_all ?? false)) {
+      return false;
+    }
     if (!query.trim()) return true;
     const q = query.toLowerCase().trim();
     const name = app.name.toLowerCase();
@@ -338,7 +343,26 @@ function App() {
       </div>
 
       <div className="footer-hint">
-        单击启动 · 右键管理员 · ↑↓←→ 导航 · Ctrl+回车 管理员 · Esc 隐藏
+        <span>单击启动 · 右键管理员 · ↑↓←→ 导航 · Ctrl+回车 管理员 · Esc 隐藏</span>
+        <label className="show-all-toggle" title="勾选后显示被自动过滤的卸载程序、命令行工具等">
+          <input
+            type="checkbox"
+            checked={config?.show_all ?? false}
+            onChange={async (e) => {
+              const showAll = e.target.checked;
+              try {
+                await invoke("set_show_all", { showAll });
+                setConfig((c) => (c ? { ...c, show_all: showAll } : c));
+              } catch (err) {
+                console.error("设置显示全部失败", err);
+              } finally {
+                // 点击复选框后把焦点还给搜索框，保证后续键入与视觉焦点一致
+                setTimeout(() => inputRef.current?.focus(), 0);
+              }
+            }}
+          />
+          <span>显示全部</span>
+        </label>
       </div>
 
       {/* 设置面板 */}
@@ -403,7 +427,7 @@ function App() {
               )}
               {capturing && (
                 <div className="settings-hint">
-                  支持：双击单键（Alt/Ctrl/Shift）或组合键（如 Ctrl+Space）。提示：Alt+Space 被系统占用。
+                  支持组合键（如 Ctrl+Space、Alt+Space）。提示：Win 键组合可能被系统占用。
                 </div>
               )}
             </div>

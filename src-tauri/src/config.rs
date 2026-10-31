@@ -36,19 +36,24 @@ pub struct Config {
     pub hotkey: Hotkey,
     pub autostart: bool,
     pub appearance: Appearance,
+    /// 是否显示全部应用（包括被自动过滤的噪音应用）
+    #[serde(default)]
+    pub show_all: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Config {
-            hotkey: Hotkey::Double {
-                key: "alt".to_string(),
+            hotkey: Hotkey::Combo {
+                modifiers: vec!["alt".to_string(), "shift".to_string()],
+                key: "space".to_string(),
             },
             autostart: false,
             appearance: Appearance {
                 opacity: 0.8,
                 corner_radius: 12.0,
             },
+            show_all: false,
         }
     }
 }
@@ -70,6 +75,24 @@ pub fn load() -> Config {
     let path = config_path();
     if let Ok(text) = std::fs::read_to_string(&path) {
         if let Ok(cfg) = serde_json::from_str::<Config>(&text) {
+            // 迁移旧配置：
+            // 1. 双击单键模式已废弃，重置为默认组合键
+            // 2. 旧默认键 Alt+Space 与 Windows 系统菜单冲突，迁移到 Alt+Shift+Space
+            let needs_migrate = matches!(cfg.hotkey, Hotkey::Double { .. })
+                || matches!(
+                    &cfg.hotkey,
+                    Hotkey::Combo { modifiers, key }
+                        if modifiers.len() == 1 && modifiers[0] == "alt" && key == "space"
+                );
+            if needs_migrate {
+                let mut migrated = cfg;
+                migrated.hotkey = Hotkey::Combo {
+                    modifiers: vec!["alt".to_string(), "shift".to_string()],
+                    key: "space".to_string(),
+                };
+                let _ = save_inner(&migrated);
+                return migrated;
+            }
             return cfg;
         }
     }
@@ -135,7 +158,18 @@ pub fn get_config() -> Config {
 
 #[tauri::command]
 pub fn set_config(cfg: Config) -> Result<(), String> {
-    save(cfg).map_err(|e| format!("保存配置失败: {}", e))
+    save(cfg.clone()).map_err(|e| format!("保存配置失败: {}", e))?;
+
+    // 快捷键变更后重新注册系统热键
+    #[cfg(windows)]
+    {
+        if let Err(e) = crate::double_alt::register(&cfg.hotkey) {
+            // 注册失败不阻断保存（配置已落盘），但返回警告信息
+            eprintln!("[luma] {}", e);
+        }
+    }
+
+    Ok(())
 }
 
 /// 设置开机自启（通过计划任务 LaunchpadElevated 的启用/禁用实现）
@@ -166,4 +200,12 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
         let _ = enabled;
         Err("当前平台不支持".to_string())
     }
+}
+
+/// 设置"显示全部"开关（是否显示被自动过滤的噪音应用）
+#[tauri::command]
+pub fn set_show_all(show_all: bool) -> Result<(), String> {
+    let mut cfg = get();
+    cfg.show_all = show_all;
+    save(cfg).map_err(|e| format!("保存配置失败: {}", e))
 }

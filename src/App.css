@@ -197,11 +197,34 @@ body,
 
 .footer-hint {
   flex-shrink: 0;
-  text-align: center;
-  padding: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
   font-size: 12px;
   color: var(--mv-text-muted);
   border-top: 1px solid var(--mv-border);
+}
+
+.show-all-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--mv-text-secondary);
+  user-select: none;
+  transition: color 0.15s ease-out;
+}
+
+.show-all-toggle:hover {
+  color: var(--mv-text);
+}
+
+.show-all-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--mv-accent);
+  cursor: pointer;
 }
 
 /* ==================== 设置面板 ==================== */

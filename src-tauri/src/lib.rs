@@ -10,6 +10,8 @@ struct AppEntry {
     path: String,
     /// 图标的 base64 data URL（如 "data:image/png;base64,..."），提取失败则为 None
     icon: Option<String>,
+    /// 非 None 表示被自动过滤（噪音应用），值为过滤原因，前端据此提供"手动显示"入口
+    hidden_reason: Option<String>,
 }
 
 /// 扫描应用：开始菜单 .lnk + 注册表 App Paths
@@ -47,6 +49,73 @@ fn scan_apps() -> Vec<AppEntry> {
     apps
 }
 
+/// 判断一个应用是否为"噪音"（卸载程序、命令行工具、帮助文档、修复工具等）。
+/// 返回 Some(原因) 表示应被自动过滤。
+fn classify_noise(name: &str, path: &str) -> Option<String> {
+    let name_lower = name.to_lowercase();
+    let path_lower = path.to_lowercase();
+
+    // 卸载程序（最常见噪音）
+    if name_lower.contains("uninstall")
+        || name_lower.contains("卸载")
+        || name_lower.contains("deinstall")
+    {
+        return Some("卸载程序".to_string());
+    }
+
+    // 命令行工具 / 开发者命令行（Visual Studio 等生成的一堆 prompt 快捷方式）
+    if name_lower.contains("command prompt")
+        || name_lower.contains("命令行")
+        || name_lower.contains("cross tools")
+        || name_lower.contains("native tools")
+        || name_lower.contains("developer prompt")
+        || name_lower.contains("x86_")
+        || name_lower.contains("x64_")
+    {
+        return Some("命令行工具".to_string());
+    }
+
+    // 帮助 / 文档 / 说明
+    if name_lower.contains("readme")
+        || name_lower.contains("帮助")
+        || name_lower.contains("帮助文档")
+        || name_lower.contains("manual")
+        || name_lower.contains("help")
+        || name_lower.contains("documentation")
+        || name_lower.contains("用户手册")
+    {
+        return Some("帮助文档".to_string());
+    }
+
+    // 修复 / 诊断工具
+    if name_lower.contains("repair")
+        || name_lower.contains("修复")
+        || name_lower.contains("diagnostic")
+        || name_lower.contains("诊断")
+    {
+        return Some("诊断/修复工具".to_string());
+    }
+
+    // 更新 / 升级工具
+    if name_lower.contains("update")
+        || name_lower.contains("更新")
+        || name_lower.contains("upgrade")
+    {
+        return Some("更新工具".to_string());
+    }
+
+    // 路径特征：目标位于 uninstall 目录
+    if path_lower.contains("\\uninstall")
+        || path_lower.contains("unins")
+        || path_lower.contains("unwise")
+        || path_lower.contains("uninstall.exe")
+    {
+        return Some("卸载程序".to_string());
+    }
+
+    None
+}
+
 /// 用 parselnk 解析 .lnk 快捷方式
 fn parse_lnk(lnk_path: &PathBuf) -> Option<AppEntry> {
     let name = lnk_path.file_stem()?.to_string_lossy().to_string();
@@ -59,9 +128,10 @@ fn parse_lnk(lnk_path: &PathBuf) -> Option<AppEntry> {
 
     // 注意：图标不在扫描阶段提取（避免阻塞），由前端通过 get_icon 命令异步加载
     Some(AppEntry {
-        name,
-        path: target_str,
+        name: name.clone(),
+        path: target_str.clone(),
         icon: None,
+        hidden_reason: classify_noise(&name, &target_str),
     })
 }
 
@@ -195,7 +265,13 @@ fn scan_app_paths(apps: &mut Vec<AppEntry>, seen: &mut HashSet<String>) {
                         .unwrap_or_else(|| key.trim_end_matches(".exe").to_string());
 
                     if seen.insert(name.to_lowercase()) {
-                        apps.push(AppEntry { name, path, icon: None });
+                        let hidden_reason = classify_noise(&name, &path);
+                        apps.push(AppEntry {
+                            name,
+                            path,
+                            icon: None,
+                            hidden_reason,
+                        });
                     }
                 }
             }
@@ -437,189 +513,198 @@ fn disable_window_corner_and_shadow(_hwnd: isize) {}
 #[cfg(windows)]
 mod double_alt {
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Mutex, OnceLock};
-    use std::time::{Duration, Instant};
-    use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
-    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use std::sync::OnceLock;
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-        VK_CONTROL, VK_ESCAPE, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_MENU, VK_RCONTROL, VK_RMENU,
-        VK_RSHIFT, VK_SHIFT,
+        GetAsyncKeyState, RegisterHotKey, UnregisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT,
+        MOD_SHIFT, MOD_WIN, VK_ESCAPE,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG,
-        WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
+        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW, MSG,
+        WNDCLASSW, HWND_MESSAGE, WM_HOTKEY,
     };
 
-    use crate::config::{self, Hotkey};
+    use crate::config::Hotkey;
+
+    /// 唤醒快捷键的注册 ID（RegisterHotKey 用它区分消息来源）
+    const HOTKEY_ID: i32 = 1;
 
     /// 全局标志：检测到唤醒快捷键时置 true，主线程读取后复位
     pub static TOGGLE: AtomicBool = AtomicBool::new(false);
 
-    /// 全局标志：检测到 Esc 按下时置 true，主线程读取后复位（用于隐藏窗口）
-    pub static ESC_PRESSED: AtomicBool = AtomicBool::new(false);
-
     /// 标记窗口是否处于"由我们主动显示"的状态（权威来源，避免 is_visible 状态不一致）
     pub static WINDOW_VISIBLE: AtomicBool = AtomicBool::new(false);
 
-    /// 上次"双击单键"的按下时间（用于判断是否"双击"）
-    static LAST_TAP: OnceLock<Mutex<Option<(String, Instant)>>> = OnceLock::new();
+    /// 终极兜底：直接轮询物理键盘状态判断 Esc 是否被按下。
+    /// 不依赖焦点、不依赖钩子投递，专门解决"WebView2 拥有焦点时
+    /// 低级键盘钩子静默停止投递"导致的 Esc 失效问题。
+    /// 返回值 true 表示 Esc 当前正被按下（最高位为 1）。
+    pub fn esc_down() -> bool {
+        unsafe { (GetAsyncKeyState(VK_ESCAPE as i32) & (0x8000u16 as i16)) != 0 }
+    }
 
-    /// 组合键模式下，当前按下的修饰键集合（用于追踪组合键状态）
-    static PRESSED_MODS: OnceLock<Mutex<Vec<u32>>> = OnceLock::new();
-
-    /// 将虚拟键码映射为配置里的键名字符串
-    fn vk_to_name(vk: u32) -> Option<&'static str> {
-        match vk {
-            v if v == VK_MENU as u32 || v == VK_LMENU as u32 || v == VK_RMENU as u32 => Some("alt"),
-            v if v == VK_CONTROL as u32 || v == VK_LCONTROL as u32 || v == VK_RCONTROL as u32 => {
-                Some("ctrl")
+    /// 将配置里的修饰键名映射为 RegisterHotKey 的 MOD_* 标志位
+    fn modifier_flags(mods: &[String]) -> u32 {
+        let mut flags = 0u32;
+        for m in mods {
+            match m.as_str() {
+                "ctrl" => flags |= MOD_CONTROL,
+                "alt" => flags |= MOD_ALT,
+                "shift" => flags |= MOD_SHIFT,
+                "meta" | "win" => flags |= MOD_WIN,
+                _ => {}
             }
-            v if v == VK_SHIFT as u32 || v == VK_LSHIFT as u32 || v == VK_RSHIFT as u32 => {
-                Some("shift")
+        }
+        flags
+    }
+
+    /// 将配置里的主键名映射为虚拟键码
+    fn key_vk(key: &str) -> u32 {
+        match key.to_ascii_lowercase().as_str() {
+            "space" => 0x20,
+            "enter" => 0x0D,
+            "tab" => 0x09,
+            "esc" => 0x1B,
+            "delete" => 0x2E,
+            "backspace" => 0x08,
+            "left" => 0x25,
+            "up" => 0x26,
+            "right" => 0x27,
+            "down" => 0x28,
+            k if k.starts_with('f') => {
+                if let Ok(n) = k[1..].parse::<u32>() {
+                    if (1..=12).contains(&n) {
+                        return 0x70 + n - 1;
+                    }
+                }
+                0
             }
-            _ => None,
+            k if k.len() == 1 => {
+                let c = k.as_bytes()[0];
+                if c.is_ascii_lowercase() {
+                    (c - b'a' + 0x41) as u32
+                } else if c.is_ascii_digit() {
+                    c as u32
+                } else {
+                    0
+                }
+            }
+            _ => 0,
         }
     }
 
-    /// 判断一个虚拟键码是否是修饰键（Ctrl/Alt/Shift/Win）
-    fn is_modifier(vk: u32) -> bool {
-        vk_to_name(vk).is_some()
-    }
-
-    /// 将主键（非修饰键）虚拟键码映射为配置里的键名
-    fn main_key_name(vk: u32) -> String {
-        // 字母 A-Z
-        if (0x41..=0x5A).contains(&vk) {
-            return ((vk as u8) as char).to_ascii_lowercase().to_string();
-        }
-        // 数字 0-9
-        if (0x30..=0x39).contains(&vk) {
-            return ((vk as u8) as char).to_string();
-        }
-        // 功能键 F1-F12
-        if (0x70..=0x7B).contains(&vk) {
-            return format!("f{}", vk - 0x70 + 1);
-        }
-        // 特殊键
-        match vk {
-            0x20 => "space".to_string(),
-            0x0D => "enter".to_string(),
-            0x09 => "tab".to_string(),
-            0x1B => "esc".to_string(),
-            0x2E => "delete".to_string(),
-            0x08 => "backspace".to_string(),
-            _ => format!("vk{}", vk),
-        }
-    }
-
-    unsafe extern "system" fn keyboard_proc(
-        n_code: i32,
+    /// message-only 隐藏窗口的窗口过程：收到 WM_HOTKEY 时置 TOGGLE
+    unsafe extern "system" fn hotkey_window_proc(
+        hwnd: HWND,
+        msg: u32,
         w_param: WPARAM,
         l_param: LPARAM,
     ) -> LRESULT {
-        if n_code >= 0 {
-            let kb = unsafe { &*(l_param as *const KBDLLHOOKSTRUCT) };
-            let is_down =
-                w_param == WM_KEYDOWN as usize || w_param == WM_SYSKEYDOWN as usize;
-            let is_up = w_param == 0x0101 || w_param == 0x0105; // WM_KEYUP / WM_SYSKEYUP
-
-            let hotkey = config::get().hotkey;
-
-            match &hotkey {
-                // 双击单键模式
-                Hotkey::Double { key } => {
-                    // 期望的修饰键名 → 检查是否匹配
-                    if is_down {
-                        if let Some(name) = vk_to_name(kb.vkCode) {
-                            if name == key {
-                                let last = LAST_TAP.get_or_init(|| Mutex::new(None));
-                                let mut guard = last.lock().unwrap();
-                                let now = Instant::now();
-                                let is_double = match &*guard {
-                                    Some((prev_key, prev_time)) => {
-                                        prev_key == key
-                                            && now.duration_since(*prev_time)
-                                                < Duration::from_millis(400)
-                                    }
-                                    None => false,
-                                };
-                                *guard = Some((key.clone(), now));
-
-                                if is_double {
-                                    TOGGLE.store(true, Ordering::SeqCst);
-                                }
-                            }
-                        }
-                    }
-                }
-                // 组合键模式：修饰键 + 主键
-                Hotkey::Combo { modifiers, key } => {
-                    // 追踪修饰键按下/释放
-                    if is_down && is_modifier(kb.vkCode) {
-                        let mods = PRESSED_MODS.get_or_init(|| Mutex::new(Vec::new()));
-                        let mut guard = mods.lock().unwrap();
-                        if !guard.contains(&kb.vkCode) {
-                            guard.push(kb.vkCode);
-                        }
-                    }
-                    if is_up && is_modifier(kb.vkCode) {
-                        let mods = PRESSED_MODS.get_or_init(|| Mutex::new(Vec::new()));
-                        let mut guard = mods.lock().unwrap();
-                        guard.retain(|&v| v != kb.vkCode);
-                    }
-
-                    // 按下主键时，检查修饰键是否齐全
-                    if is_down && !is_modifier(kb.vkCode) {
-                        if main_key_name(kb.vkCode) == *key {
-                            let mods = PRESSED_MODS.get_or_init(|| Mutex::new(Vec::new()));
-                            let guard = mods.lock().unwrap();
-                            // 收集当前按下的修饰键名
-                            let mut pressed_names: Vec<&str> = guard
-                                .iter()
-                                .filter_map(|&v| vk_to_name(v))
-                                .collect();
-                            pressed_names.sort();
-                            let mut want_names: Vec<&str> =
-                                modifiers.iter().map(|s| s.as_str()).collect();
-                            want_names.sort();
-
-                            if pressed_names == want_names {
-                                TOGGLE.store(true, Ordering::SeqCst);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 检测 Esc 按下（兜底方案）：
-            // 注意：焦点在本窗口（WebView2/Chromium）时，Windows 会静默停止
-            // 向 WH_KEYBOARD_LL 钩子投递事件，因此 Esc 主要由前端 keydown 处理。
-            // 这里的钩子只作为"焦点不在本窗口"时的兜底。
-            if is_down && kb.vkCode == VK_ESCAPE as u32 {
-                ESC_PRESSED.store(true, Ordering::SeqCst);
-            }
+        if msg == WM_HOTKEY && w_param as i32 == HOTKEY_ID {
+            TOGGLE.store(true, Ordering::SeqCst);
+            return 0;
         }
-        unsafe { CallNextHookEx(std::ptr::null_mut(), n_code, w_param, l_param) }
+        unsafe { DefWindowProcW(hwnd, msg, w_param, l_param) }
     }
 
-    /// 启动键盘钩子线程（阻塞在消息循环里）
+    /// 注册唤醒快捷键，返回是否成功。
+    /// 使用 RegisterHotKey（PowerToys 同款正规军方案）：
+    /// 系统级注册，不受焦点/WebView2 影响，比 WH_KEYBOARD_LL 钩子稳定得多。
+    pub fn register(hotkey: &Hotkey) -> Result<(), String> {
+        let (mods, key) = match hotkey {
+            Hotkey::Combo { modifiers, key } => (modifier_flags(modifiers), key_vk(key)),
+            // 双击单键模式不再支持：RegisterHotKey 无法表达"双击"，
+            // 但为兼容旧配置，回退为"该键 + Ctrl"组合。
+            Hotkey::Double { key } => (MOD_CONTROL, key_vk(key)),
+        };
+
+        if key == 0 {
+            return Err(format!("无法识别的快捷键主键: {:?}", hotkey));
+        }
+
+        // MOD_NOREPEAT：按住不放不重复触发，只在首次按下时触发一次
+        let fs_modifiers = mods | MOD_NOREPEAT;
+
+        // 热键注册到 message-only 窗口（HWND_MESSAGE = -3），
+        // 由独立线程的消息循环接收 WM_HOTKEY。
+        let hwnd = hotkey_window();
+        if hwnd == 0 {
+            return Err("创建热键窗口失败".to_string());
+        }
+
+        unsafe {
+            // 幂等：先反注册旧热键（避免改键后重复注册失败）
+            let _ = UnregisterHotKey(hwnd as _, HOTKEY_ID);
+            let ok = RegisterHotKey(hwnd as _, HOTKEY_ID, fs_modifiers, key);
+            if ok == 0 {
+                return Err(format!(
+                    "注册快捷键失败（可能被其他程序占用）: {:?}",
+                    hotkey
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// 获取（或创建）承载热键的 message-only 隐藏窗口
+    fn hotkey_window() -> isize {
+        static WINDOW: OnceLock<isize> = OnceLock::new();
+        *WINDOW.get_or_init(|| unsafe {
+            let class_name = windows_sys::core::w!("LumaHotkeyWindow");
+
+            // 注册窗口类
+            let wc = WNDCLASSW {
+                style: 0,
+                lpfnWndProc: Some(hotkey_window_proc),
+                cbClsExtra: 0,
+                cbWndExtra: 0,
+                hInstance: std::ptr::null_mut(),
+                hIcon: std::ptr::null_mut(),
+                hCursor: std::ptr::null_mut(),
+                hbrBackground: std::ptr::null_mut(),
+                lpszMenuName: std::ptr::null(),
+                lpszClassName: class_name,
+            };
+            RegisterClassW(&wc);
+
+            // 创建 message-only 窗口（父窗口 HWND_MESSAGE）
+            let hwnd = CreateWindowExW(
+                0,
+                class_name,
+                class_name,
+                0,
+                0,
+                0,
+                0,
+                0,
+                HWND_MESSAGE,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            );
+            hwnd as isize
+        })
+    }
+
+    /// 启动热键消息循环线程（阻塞在 GetMessageW 里接收 WM_HOTKEY）
     pub fn start() {
         std::thread::spawn(|| unsafe {
-            let h_module = GetModuleHandleW(std::ptr::null());
-            let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), h_module, 0);
-            if hook.is_null() {
+            // 先确保窗口已创建（register 已调用过），这里再兜底创建一次
+            let hwnd = hotkey_window();
+            if hwnd == 0 {
+                eprintln!("[luma] 热键窗口创建失败，唤醒快捷键不可用");
                 return;
             }
 
             let mut msg: MSG = std::mem::zeroed();
             loop {
+                // 阻塞等待消息；返回 0 表示收到 WM_QUIT，退出
                 let ret = GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0);
                 if ret <= 0 {
                     break;
                 }
+                DispatchMessageW(&msg);
             }
-
-            UnhookWindowsHookEx(hook);
         });
     }
 }
@@ -647,7 +732,8 @@ pub fn run() {    let app = tauri::Builder::default()
             hide_window,
             config::get_config,
             config::set_config,
-            config::set_autostart
+            config::set_autostart,
+            config::set_show_all
         ])
         .setup(|app| {
             // 初始化配置（启动时加载一次）
@@ -690,19 +776,28 @@ pub fn run() {    let app = tauri::Builder::default()
                         });
                     }
 
-                    // 启动双击 Alt 监听
+                    // 注册唤醒快捷键（RegisterHotKey 正规军方案）并启动热键消息循环
+                    let hotkey_cfg = crate::config::get().hotkey;
+                    if let Err(e) = double_alt::register(&hotkey_cfg) {
+                        eprintln!("[luma] {}", e);
+                    }
                     double_alt::start();
 
-                    // 轮询双击 Alt 标志，切换到主线程执行显示/隐藏
+                    // 轮询热键标志，切换到主线程执行显示/隐藏
                     // 关键：show + 抢焦点必须在主线程（UI 线程）执行，
                     // 否则 SetForegroundWindow 受前台锁限制导致焦点抢不到
                     let win = window.clone();
                     let handle = app.handle().clone();
-                    std::thread::spawn(move || loop {
-                        // 处理 Esc（兜底）：窗口可见时隐藏。
-                        // 主要路径在前端 keydown 处理，这里兜底"焦点不在本窗口"的场景。
-                        if double_alt::ESC_PRESSED.swap(false, Ordering::SeqCst) {
-                            if double_alt::WINDOW_VISIBLE.load(Ordering::SeqCst) {
+                    std::thread::spawn(move || {
+                        // Esc 物理键轮询的"上一次按下"状态，用于边沿检测（按下瞬间才触发一次）
+                        let mut esc_prev_down = false;
+                        loop {
+                        // 终极兜底：物理键盘轮询 Esc。即使 WebView2 焦点导致
+                        // 低级键盘钩子失聪、前端 keydown 收不到，这里也能捕获并隐藏。
+                        // 仅在窗口"由我们主动显示"时生效，避免后台误触发。
+                        if double_alt::WINDOW_VISIBLE.load(Ordering::SeqCst) {
+                            let esc_now_down = double_alt::esc_down();
+                            if esc_now_down && !esc_prev_down {
                                 double_alt::WINDOW_VISIBLE.store(false, Ordering::SeqCst);
                                 let win = win.clone();
                                 let handle = handle.clone();
@@ -710,9 +805,12 @@ pub fn run() {    let app = tauri::Builder::default()
                                     let _ = win.hide();
                                 });
                             }
+                            esc_prev_down = esc_now_down;
+                        } else {
+                            esc_prev_down = false;
                         }
 
-                        // 处理双击 Alt：切换显示/隐藏
+                        // 处理唤醒热键：切换显示/隐藏
                         if double_alt::TOGGLE.swap(false, Ordering::SeqCst) {
                             let win = win.clone();
                             let handle = handle.clone();
@@ -736,6 +834,7 @@ pub fn run() {    let app = tauri::Builder::default()
                             });
                         }
                         std::thread::sleep(std::time::Duration::from_millis(20));
+                        }
                     });
                 } else {
                     eprintln!("[luma] 未找到 main 窗口");
