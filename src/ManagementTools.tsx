@@ -30,7 +30,7 @@ export function ManagementTools({ onAdd, onPreview }: Props) {
 export function ImportPreview({ preview, onClose, onImported }: { preview: BackupPreview; onClose: () => void; onImported: (config: Config) => void }) {
   const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
   return <Dialog title="确认导入配置" label="取消导入" className="editor-panel" busy={busy} onClose={onClose}>
-    <p>手动应用 {preview.manual_apps} · 搜索别名 {preview.aliases} · 分类 {preview.categories}</p><p>置顶 {preview.pinned} · 隐藏 {preview.hidden} · 扫描目录 {preview.directories}</p>
+    <p>手动应用 {preview.manual_apps} · 搜索别名 {preview.aliases} · 分类 {preview.categories}</p><p>固定应用 {preview.pinned} · 隐藏 {preview.hidden} · 扫描目录 {preview.directories}</p>
     <p className="settings-hint">导入将替换上述个人配置。当前配置会先自动备份；本机快捷键、自启和显示器位置保留。</p>
     {preview.missing.length > 0 && <details open><summary>{preview.missing.length} 个路径在本机不存在，导入后可修正</summary><pre className="path-list">{preview.missing.join("\n")}</pre></details>}
     {error && <p className="form-error" role="alert">{error}</p>}

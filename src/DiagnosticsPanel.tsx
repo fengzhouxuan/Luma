@@ -43,7 +43,7 @@ export function DiagnosticsPanel({ apps, config, snapshot, initialId, onClose, o
           {matches.length === 0 && <p>没有匹配的已发现应用，请查看下方扫描记录。</p>}</div>
         <div className="diagnostics-detail">{app ? <>
           <h3>{app.name}</h3>
-          <div className="panel-actions"><button className="btn" onClick={() => onPin(app)}>{config?.pinned_apps?.includes(app.id) ? "取消置顶" : "置顶应用"}</button>
+          <div className="panel-actions"><button className="btn" onClick={() => onPin(app)}>{config?.pinned_apps?.includes(app.id) ? "取消固定" : "固定到应用栏"}</button>
             <button className="btn" onClick={() => onHide(app)}>{config?.hidden_apps?.includes(app.id) ? "取消手动隐藏" : "手动隐藏"}</button></div>
           <dl>{[
             ["扫描来源", app.source], ["来源位置", app.source_path], ["程序路径", app.path],

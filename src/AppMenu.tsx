@@ -30,7 +30,7 @@ export function AppMenu({ app, config, x, y, onClose, onEdit, onDetails, onLaunc
       <button role="menuitem" onClick={onEdit}>别名与启动设置</button>
       <button role="menuitem" onClick={() => void action("reveal_app")}>打开所在目录</button>
       <button role="menuitem" onClick={() => void action("copy_app_path")}>复制应用路径</button>
-      <button role="menuitem" onClick={onPin}>{config?.pinned_apps?.includes(app.id) ? "取消置顶" : "置顶应用"}</button>
+      <button role="menuitem" onClick={onPin}>{config?.pinned_apps?.includes(app.id) ? "从应用栏取消固定" : "固定到应用栏"}</button>
       <button role="menuitem" onClick={onHide}>{config?.hidden_apps?.includes(app.id) ? "取消手动隐藏" : "手动隐藏"}</button>
       <button role="menuitem" onClick={onDetails}>查看应用详情</button>
     </section>

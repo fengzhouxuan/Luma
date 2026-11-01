@@ -930,6 +930,7 @@ pub fn run() {
             config::set_extra_dirs,
             config::set_app_category,
             config::set_app_pinned,
+            config::place_pinned_app,
             config::set_app_hidden,
             diagnostics::get_diagnostics,
             runtime::quit_app,

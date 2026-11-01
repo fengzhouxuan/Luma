@@ -10,6 +10,9 @@ import { UiIcon, CategoryIcon } from "./UiIcon";
 import { Dialog } from "./Dialog";
 import { useOverlayFocus } from "./overlayFocus";
 import { LatestWriter } from "./latestWriter";
+import { FixedBar } from "./FixedBar";
+import { fixedApps } from "./dock";
+import { useAppDrag } from "./useAppDrag";
 import { ManagementTools, ImportPreview } from "./ManagementTools";
 import type { AppEntry, Config, HotkeyConfig, Usage, ScanResult, Diagnostics, ManualApp, AutostartStatus, BackupPreview } from "./types";
 import { IconLoader, iconKey, type IconTarget } from "./iconLoader";
@@ -66,6 +69,19 @@ function App() {
   };
   const flushAppearance = () => { void appearanceWriter.current?.flush(); };
   const gridRef = useRef<HTMLDivElement>(null);
+  const dockRef = useRef<HTMLDivElement>(null);
+  const pinQueue = useRef<Promise<void>>(Promise.resolve());
+  const mutatePins = (command: string, args: Record<string, unknown>) => {
+    const job = pinQueue.current.then(async () => {
+      const next = await invoke<Config>(command, args);
+      setConfig(current => current ? { ...current, pinned_apps: next.pinned_apps } : next);
+    });
+    pinQueue.current = job.catch(error => setNotice(`保存固定应用失败：${error}`));
+    return pinQueue.current;
+  };
+  const placePinned = (app: AppEntry, beforeId: string | null) => { void mutatePins("place_pinned_app", { appId: app.id, beforeId }); };
+  const appDrag = useAppDrag(dockRef, placePinned);
+  const dragging = !!appDrag.drag;
   const scanInFlight = useRef<Promise<void> | null>(null);
   const scanPending = useRef(false);
   const forcePending = useRef(false);
@@ -86,7 +102,7 @@ function App() {
 
   useEffect(() => () => iconLoader.current?.reset(), []);
 
-  useEffect(() => { void invoke("set_overlay_open", { open: settingsOpen || diagnosticsOpen || !!editor || !!menu || !!preview }); }, [settingsOpen, diagnosticsOpen, editor, menu, preview]);
+  useEffect(() => { void invoke("set_overlay_open", { open: settingsOpen || diagnosticsOpen || !!editor || !!menu || !!preview || dragging }); }, [settingsOpen, diagnosticsOpen, editor, menu, preview, dragging]);
   useEffect(() => () => { void invoke("set_overlay_open", { open: false }); }, []);
   useEffect(() => {
     let disposed = false; let stop: (() => void) | undefined;
@@ -292,8 +308,7 @@ function App() {
   };
 
   const togglePinned = async (app: AppEntry) => {
-    try { setConfig(await invoke<Config>("set_app_pinned", { appId: app.id, pinned: !config?.pinned_apps?.includes(app.id) })); }
-    catch (error) { alert(`设置置顶失败: ${error}`); }
+    await mutatePins("set_app_pinned", { appId: app.id, pinned: !config?.pinned_apps?.includes(app.id) });
   };
   const toggleHidden = async (app: AppEntry) => {
     try { setConfig(await invoke<Config>("set_app_hidden", { appId: app.id, hidden: !config?.hidden_apps?.includes(app.id) })); }
@@ -475,22 +490,25 @@ function App() {
     (!app.hidden_reason || (config?.show_all ?? false)) &&
     (activeCategory === "全部" || app.category === activeCategory)
   ), query, config ?? {}), [categorizedApps, activeCategory, query, config]);
+  const dockApps = useMemo(() => fixedApps(categorizedApps, config ?? {}), [categorizedApps, config]);
   const selectedIndex = Math.max(0, filtered.findIndex((app) => app.id === selectedId));
   const setSelectedIndex = (value: number | ((index: number) => number)) => {
     const index = typeof value === "function" ? value(selectedIndex) : value;
     setSelectedId(filtered[index]?.id ?? null);
   };
 
-  const iconTargets = JSON.stringify(filtered.map(({ path, shortcut_path }) => ({ path, shortcut_path })));
+  const iconTargets = JSON.stringify([...dockApps, ...filtered].map(({ path, shortcut_path }) => ({ path, shortcut_path })));
   useEffect(() => {
     const loader = iconLoader.current;
     const grid = gridRef.current;
-    if (!loader || !grid) return;
+    const dock = dockRef.current;
+    if (!loader || !grid || !dock) return;
     const targets: IconTarget[] = JSON.parse(iconTargets);
     const byKey = new Map(targets.map((app) => [iconKey(app), app]));
     const visible = new Map<string, number>();
+    const dockVisible = new Map<string, number>();
     let disposed = false;
-    const publish = () => loader.setVisible([...visible].sort((a, b) => a[1] - b[1])
+    const publish = () => loader.setVisible([...new Map([...visible, ...dockVisible])].sort((a, b) => a[1] - b[1])
       .map(([key]) => byKey.get(key)).filter((app): app is IconTarget => !!app));
     let observer: IntersectionObserver | undefined;
     if (typeof IntersectionObserver !== "undefined") {
@@ -502,7 +520,7 @@ function App() {
           if (!key) continue;
           if (entry.isIntersecting) {
             const rect = entry.boundingClientRect;
-            visible.set(key, rect.bottom > bounds.top && rect.top < bounds.bottom ? 0 : 1);
+            visible.set(key, rect.bottom > bounds.top && rect.top < bounds.bottom ? 1 : 2);
           } else {
             visible.delete(key);
           }
@@ -513,10 +531,28 @@ function App() {
     } else {
       loader.setVisible(targets);
     }
+    const dockObserver = typeof IntersectionObserver !== "undefined" ? new IntersectionObserver(entries => {
+      if (disposed) return;
+      for (const entry of entries) {
+        const key = entry.target.getAttribute("data-icon-key");
+        if (key) { if (entry.isIntersecting) dockVisible.set(key, 0); else dockVisible.delete(key); }
+      }
+      publish();
+    }, { root: dock, rootMargin: "0px 40px" }) : undefined;
+    dock.querySelectorAll('[data-icon-key]').forEach(item => dockObserver?.observe(item));
+    if (dockObserver) {
+      const bounds = dock.getBoundingClientRect();
+      dock.querySelectorAll<HTMLElement>('[data-icon-key]').forEach(item => {
+        const rect = item.getBoundingClientRect();
+        if (rect.right > bounds.left - 40 && rect.left < bounds.right + 40) dockVisible.set(item.dataset.iconKey!, 0);
+      });
+      publish();
+    }
     const retryTimer = window.setInterval(() => loader.retry(), 30_000);
     return () => {
       disposed = true;
       observer?.disconnect();
+      dockObserver?.disconnect();
       window.clearInterval(retryTimer);
       loader.setVisible([]);
     };
@@ -542,7 +578,9 @@ function App() {
   }, [selectedIndex]);
 
   return (
-    <div className="launchpad" ref={rootRef} onKeyDown={handleKeyDown} onFocusCapture={event => {
+    <div className={`launchpad${dragging ? ' app-dragging' : ''}`} ref={rootRef} onKeyDown={handleKeyDown} onClickCapture={event => {
+      if (appDrag.consumeClick()) { event.preventDefault(); event.stopPropagation(); }
+    }} onFocusCapture={event => {
       if (!overlayKey && event.target instanceof HTMLElement) openerRef.current = event.target;
     }}>
       <div className="launcher-content" inert={!!overlayKey}>
@@ -579,6 +617,9 @@ function App() {
           <UiIcon name="settings"/>
         </button>
       </div>
+
+      <FixedBar apps={dockApps} listRef={dockRef} drag={appDrag.drag} onPlace={placePinned}
+        onLaunch={app => void launch(app)} onMenu={(app, x, y) => setMenu({ app, x, y })} onDrag={appDrag.start}/>
 
       <div className="main-area">
         {/* 分类侧边栏 */}
@@ -664,9 +705,10 @@ function App() {
                 className={`app-tile${idx === selectedIndex ? " selected" : ""}`}
                 role="button"
                 tabIndex={0}
-                aria-label={`${app.name}${config?.pinned_apps?.includes(app.id) ? "，已置顶" : ""}`}
+                aria-label={`${app.name}${config?.pinned_apps?.includes(app.id) ? "，已固定" : ""}`}
                 onFocus={() => setSelectedIndex(idx)}
                 onClick={() => launch(app)}
+                onPointerDown={event => appDrag.start(event, app)}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setMenu({ app, x: e.clientX, y: e.clientY });
@@ -686,7 +728,7 @@ function App() {
                 {config?.pinned_apps?.includes(app.id) && <span className="app-pin-corner" aria-hidden="true"><UiIcon name="star"/></span>}
                 <div className="app-icon">
                   {app.icon ? (
-                    <img src={app.icon} alt={app.name} />
+                    <img src={app.icon} alt={app.name} draggable={false}/>
                   ) : (
                     <div className="app-icon-fallback">
                       {app.name.charAt(0).toUpperCase()}
@@ -725,6 +767,10 @@ function App() {
       </div>
 
       </div>
+      {appDrag.drag && <div className="app-drag-ghost" aria-hidden="true" style={{ left: Math.min(appDrag.drag.x + 14, window.innerWidth - 210), top: Math.min(appDrag.drag.y + 14, window.innerHeight - 64) }}>
+        {appDrag.drag.app.icon ? <img src={appDrag.drag.app.icon} alt=""/> : <UiIcon name="star"/>}
+        <span>{appDrag.drag.app.name}<small>{appDrag.drag.overDock ? "松开固定到此处" : "拖到上方固定栏"}</small></span>
+      </div>}
       {/* 设置面板 */}
       {settingsOpen && config && (
         <Dialog title="设置" label="关闭设置" onClose={hideLauncher}>

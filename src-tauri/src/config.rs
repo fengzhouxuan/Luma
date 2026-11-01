@@ -290,6 +290,25 @@ pub fn set_app_pinned(app_id: String, pinned: bool) -> Result<Config, String> {
 }
 
 #[tauri::command]
+pub fn place_pinned_app(app_id: String, before_id: Option<String>) -> Result<Config, String> {
+    update(|cfg| {
+        place_pin(&mut cfg.pinned_apps, app_id, before_id.as_deref());
+        cfg.clone()
+    })
+}
+
+fn place_pin(pins: &mut Vec<String>, app_id: String, before_id: Option<&str>) {
+    if before_id == Some(app_id.as_str()) && pins.contains(&app_id) {
+        return;
+    }
+    pins.retain(|id| id != &app_id);
+    let index = before_id
+        .and_then(|before| pins.iter().position(|id| id == before))
+        .unwrap_or(pins.len());
+    pins.insert(index, app_id);
+}
+
+#[tauri::command]
 pub fn set_app_hidden(app_id: String, hidden: bool) -> Result<Config, String> {
     update(|cfg| {
         cfg.hidden_apps.retain(|id| id != &app_id);
@@ -314,6 +333,20 @@ fn increment_usage(cfg: &mut Config, id: &str, now: u64) -> Usage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn placing_pins_adds_moves_and_keeps_other_entries_in_order() {
+        let mut pins = vec!["a".into(), "missing".into(), "b".into(), "c".into()];
+        place_pin(&mut pins, "c".into(), Some("a"));
+        assert_eq!(pins, ["c", "a", "missing", "b"]);
+        place_pin(&mut pins, "a".into(), None);
+        assert_eq!(pins, ["c", "missing", "b", "a"]);
+        place_pin(&mut pins, "new".into(), Some("b"));
+        assert_eq!(pins, ["c", "missing", "new", "b", "a"]);
+        place_pin(&mut pins, "new".into(), Some("new"));
+        assert_eq!(pins, ["c", "missing", "new", "b", "a"]);
+        place_pin(&mut pins, "b".into(), Some("removed"));
+        assert_eq!(pins, ["c", "missing", "new", "a", "b"]);
+    }
     #[test]
     fn legacy_config_gets_defaults_for_new_preferences() {
         let mut old = serde_json::to_value(Config::default()).unwrap();
