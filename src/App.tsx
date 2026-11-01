@@ -662,25 +662,27 @@ function App() {
                 key={app.id}
                 data-icon-key={iconKey(app)}
                 className={`app-tile${idx === selectedIndex ? " selected" : ""}`}
-                role="group"
+                role="button"
                 tabIndex={0}
-                aria-label={app.name}
+                aria-label={`${app.name}${config?.pinned_apps?.includes(app.id) ? "，已置顶" : ""}`}
                 onFocus={() => setSelectedIndex(idx)}
                 onClick={() => launch(app)}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setMenu({ app, x: e.clientX, y: e.clientY });
                 }}
+                onKeyDown={event => {
+                  if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+                    event.preventDefault(); event.stopPropagation();
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    setMenu({ app, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+                  } else if (event.key === " ") {
+                    event.preventDefault(); event.stopPropagation(); void launch(app);
+                  }
+                }}
                 onMouseEnter={() => setSelectedIndex(idx)}
                 aria-description={`${app.path}${app.arguments ? `，${app.arguments}` : ""}。单击启动，右键操作菜单，当前分类：${app.category}`}
               >
-                <div className="tile-actions" onContextMenu={(event) => event.stopPropagation()}>
-                  <button className={config?.pinned_apps?.includes(app.id) ? "pinned" : ""}
-                    aria-label={`${config?.pinned_apps?.includes(app.id) ? "取消置顶" : "置顶"} ${app.name}`}
-                    title="常用应用置顶" onClick={(event) => { event.stopPropagation(); void togglePinned(app); }}><UiIcon name="star"/></button>
-                  <button aria-label={`查看 ${app.name} 详情`} title="应用详情与诊断"
-                    onClick={(event) => { event.stopPropagation(); openDiagnostics(app.id); }}><UiIcon name="info"/></button>
-                </div>
                 <div className="app-icon">
                   {app.icon ? (
                     <img src={app.icon} alt={app.name} />
@@ -690,7 +692,10 @@ function App() {
                     </div>
                   )}
                 </div>
-                <span className="app-name">{app.name}</span>
+                <span className="app-name-row">
+                  {config?.pinned_apps?.includes(app.id) && <span className="app-pin-mark" aria-hidden="true" title="已置顶"><UiIcon name="star"/></span>}
+                  <span className="app-name">{app.name}</span>
+                </span>
               </div>
             ))
           )}
