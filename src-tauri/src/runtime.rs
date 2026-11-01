@@ -90,6 +90,35 @@ pub fn setup(app: &mut tauri::App) -> tauri::Result<()> {
         tray = tray.icon(icon.clone());
     }
     tray.build(app)?;
+    #[cfg(windows)]
+    if let Some(window) = app.get_webview_window("main") {
+        if let Err(error) = window.with_webview(|webview| {
+            use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings9;
+            use windows::core::Interface;
+            let result = (|| -> windows::core::Result<()> {
+                unsafe {
+                    let core = webview.controller().CoreWebView2()?;
+                    let settings: ICoreWebView2Settings9 = core.Settings()?.cast()?;
+                    settings.SetIsNonClientRegionSupportEnabled(true)?;
+                    // setup 时页面仍为 about:blank，首次应用导航将使用此设置。
+                }
+                Ok(())
+            })();
+            match result {
+                Ok(()) => {
+                    crate::diagnostics::record("窗口", "拖动", None, "已启用原生标题栏拖动区域")
+                }
+                Err(error) => crate::diagnostics::record(
+                    "窗口",
+                    "拖动",
+                    None,
+                    format!("使用兼容拖动：{error}"),
+                ),
+            }
+        }) {
+            crate::diagnostics::record("窗口", "拖动", None, error.to_string());
+        }
+    }
     if let Err(error) = crate::watcher::start(app.handle().clone()) {
         crate::diagnostics::record("监听", "系统", None, error.to_string());
     }

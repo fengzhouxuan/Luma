@@ -9,7 +9,9 @@ mod discovery;
 mod icon_resource;
 mod icons;
 mod launch;
+mod portable;
 mod runtime;
+mod shortcuts;
 mod watcher;
 
 mod model;
@@ -25,41 +27,11 @@ async fn scan_apps(force: Option<bool>) -> Result<catalog::ScanResult, String> {
         .map_err(|e| format!("扫描应用失败: {}", e))
 }
 
-fn start_menu_dirs() -> Vec<PathBuf> {
-    let mut start_dirs: Vec<PathBuf> = Vec::new();
-    if let Ok(programs) = std::env::var("APPDATA") {
-        start_dirs.push(PathBuf::from(programs).join("Microsoft/Windows/Start Menu/Programs"));
-    }
-    if let Ok(program_data) = std::env::var("ProgramData") {
-        start_dirs.push(PathBuf::from(program_data).join("Microsoft/Windows/Start Menu/Programs"));
-    }
-
-    start_dirs
-}
-
 fn scan_source(source: usize) -> Vec<AppEntry> {
     let mut apps = Vec::new();
     let mut seen = HashSet::new();
     if source == 0 {
-        for dir in start_menu_dirs() {
-            let pattern = dir.join("**/*.lnk").to_string_lossy().to_string();
-            if let Ok(paths) = glob::glob(&pattern) {
-                for entry in paths.flatten() {
-                    if let Some(app) = parse_lnk(&entry) {
-                        if seen.insert(app.id.clone()) {
-                            apps.push(app);
-                        }
-                    } else {
-                        diagnostics::record(
-                            "扫描",
-                            &entry.to_string_lossy(),
-                            None,
-                            "快捷方式无法解析或目标不存在",
-                        );
-                    }
-                }
-            }
-        }
+        shortcuts::scan(&mut apps, &mut seen);
     }
     if source == 1 {
         discovery::scan_app_paths(&mut apps, &mut seen);
@@ -68,9 +40,12 @@ fn scan_source(source: usize) -> Vec<AppEntry> {
         discovery::scan_installed_apps(&mut apps, &mut seen);
         #[cfg(windows)]
         packaged::scan(&mut apps, &mut seen);
+        #[cfg(windows)]
+        discovery::scan_file_associations(&mut apps, &mut seen);
     }
     if source == 2 {
         scan_game_dirs(&mut apps, &mut seen);
+        portable::scan(&mut apps, &mut seen);
     }
 
     // 保留自动分类，前端根据配置映射显示手动分类，避免分类变更触发磁盘扫描。

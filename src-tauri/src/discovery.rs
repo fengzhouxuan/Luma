@@ -83,23 +83,54 @@ fn installation_target(name: &str, location: &str, display_icon: &str) -> Option
     if executable(&icon) {
         return Some(icon);
     }
-    // DisplayIcon 也可能是 DLL/ICO；只在安装目录根部找同名主程序，不递归扫辅助组件。
+    // 只在已知安装布局中找同名主程序，不把组件 EXE 或卸载命令当成入口。
     let directory = PathBuf::from(expand_environment(location.trim().trim_matches('"')));
     if location.trim().is_empty() || !directory.is_dir() {
         return None;
     }
     let expected = normalized_name(&installation_name(name));
     let folder = normalized_name(&directory.file_name()?.to_string_lossy());
-    let mut candidates: Vec<_> = std::fs::read_dir(directory)
+    let mut directories: Vec<_> = ["", "bin", "Application", "app", "current", "current/bin"]
+        .iter()
+        .map(|part| directory.join(part))
+        .collect();
+    let mut versions: Vec<_> = std::fs::read_dir(&directory)
         .ok()?
         .flatten()
         .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_dir()
+                && path
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with("app-"))
+        })
         .collect();
-    candidates.sort();
-    candidates.into_iter().find(|path| {
-        let actual = normalized_name(&path.file_stem().unwrap_or_default().to_string_lossy());
-        executable(path) && (actual == expected || actual == folder)
-    })
+    let version = |path: &PathBuf| {
+        path.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .split(|c: char| !c.is_ascii_digit())
+            .filter_map(|part| part.parse::<u64>().ok())
+            .collect::<Vec<_>>()
+    };
+    versions.sort_by_key(|path| std::cmp::Reverse(version(path)));
+    directories.extend(versions);
+    for directory in directories {
+        let mut candidates: Vec<_> = std::fs::read_dir(directory)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .collect();
+        candidates.sort();
+        if let Some(target) = candidates.into_iter().find(|path| {
+            let actual = normalized_name(&path.file_stem().unwrap_or_default().to_string_lossy());
+            executable(path) && (actual == expected || actual == folder)
+        }) {
+            return Some(target);
+        }
+    }
+    None
 }
 
 #[cfg(windows)]
@@ -150,6 +181,88 @@ pub fn scan_app_paths(apps: &mut Vec<AppEntry>, seen: &mut HashSet<String>) {
                     path,
                     &format!("App Paths（{scope}）"),
                     format!("{scope}\\App Paths\\{key}"),
+                );
+                if seen.insert(app.id.clone()) {
+                    apps.push(app);
+                }
+            }
+        }
+    }
+}
+
+fn association_target(command: &str) -> Option<PathBuf> {
+    let command = expand_environment(command.trim());
+    let path = if let Some(rest) = command.strip_prefix('"') {
+        PathBuf::from(rest.split('"').next()?)
+    } else {
+        let lower = command.to_ascii_lowercase();
+        let end = lower
+            .match_indices(".exe")
+            .map(|(offset, _)| offset + 4)
+            .find(|end| {
+                command.get(*end..).is_some_and(|suffix| {
+                    suffix.is_empty() || suffix.starts_with(char::is_whitespace)
+                })
+            })?;
+        PathBuf::from(&command[..end])
+    };
+    executable(&path).then_some(path)
+}
+
+#[cfg(windows)]
+pub fn scan_file_associations(apps: &mut Vec<AppEntry>, seen: &mut HashSet<String>) {
+    use winreg::{
+        RegKey,
+        enums::{
+            HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY,
+        },
+    };
+    for hive in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
+        for view in [KEY_WOW64_64KEY, KEY_WOW64_32KEY] {
+            let Ok(root) = RegKey::predef(hive)
+                .open_subkey_with_flags(r"Software\Classes\Applications", KEY_READ | view)
+            else {
+                continue;
+            };
+            for name in root.enum_keys().flatten() {
+                let Ok(entry) = root.open_subkey(&name) else {
+                    continue;
+                };
+                if entry.get_raw_value("NoOpenWith").is_ok()
+                    || entry.get_raw_value("NoStartPage").is_ok()
+                {
+                    continue;
+                }
+                let Ok(command_key) = entry.open_subkey(r"shell\open\command") else {
+                    continue;
+                };
+                let Ok(command) = command_key.get_value::<String, _>("") else {
+                    continue;
+                };
+                let Some(target) = association_target(&command) else {
+                    continue;
+                };
+                if !crate::portable::gui_executable(&target) {
+                    continue;
+                }
+                let path = target.to_string_lossy().to_string();
+                let app_name = friendly_name(&path).unwrap_or_else(|| {
+                    target
+                        .file_stem()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string()
+                });
+                let scope = if hive == HKEY_CURRENT_USER {
+                    "用户"
+                } else {
+                    "系统"
+                };
+                let app = AppEntry::new(
+                    app_name,
+                    path,
+                    "文件关联应用",
+                    format!(r"{scope}\Classes\Applications\{name}"),
                 );
                 if seen.insert(app.id.clone()) {
                     apps.push(app);
@@ -278,6 +391,61 @@ mod tests {
         assert_eq!(installation_name("TRAE CN (User)"), "TRAE CN");
         assert_eq!(installation_name("Editor (System)"), "Editor");
         assert_eq!(installation_name("Editor (Preview)"), "Editor (Preview)");
+    }
+
+    #[test]
+    fn installation_layouts_and_association_commands_resolve_only_the_main_exe() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("luma layouts {}-{nonce}", std::process::id()));
+        let directories = [
+            root.join("bin"),
+            root.join("app-2.9.0"),
+            root.join("app-10.0.0"),
+        ];
+        struct Cleanup {
+            root: PathBuf,
+            directories: [PathBuf; 3],
+        }
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                for directory in &self.directories {
+                    let _ = std::fs::remove_file(directory.join("Editor.exe"));
+                    let _ = std::fs::remove_dir(directory);
+                }
+                let _ = std::fs::remove_dir(&self.root);
+            }
+        }
+        let _cleanup = Cleanup {
+            root: root.clone(),
+            directories: directories.clone(),
+        };
+        for directory in &directories {
+            std::fs::create_dir_all(directory).unwrap();
+            std::fs::write(directory.join("Editor.exe"), b"fixture").unwrap();
+        }
+        let exe = directories[0].join("Editor.exe");
+        assert_eq!(
+            installation_target("Editor", &root.to_string_lossy(), ""),
+            Some(exe.clone())
+        );
+        assert_eq!(
+            association_target(&format!("\"{}\" \"%1\"", exe.display())),
+            Some(exe.clone())
+        );
+        assert_eq!(
+            association_target(&format!("{} %1", exe.display())),
+            Some(exe.clone())
+        );
+        assert!(association_target("rundll32.exe fake.dll,Entry").is_none());
+        std::fs::remove_file(exe).unwrap();
+        assert_eq!(
+            installation_target("Editor", &root.to_string_lossy(), ""),
+            Some(directories[2].join("Editor.exe"))
+        );
     }
 
     #[test]

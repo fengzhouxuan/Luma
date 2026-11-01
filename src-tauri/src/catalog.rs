@@ -5,7 +5,11 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 const FULL_INTERVAL: Duration = Duration::from_secs(300);
-const NAMES: [&str; 3] = ["开始菜单", "安装记录、App Paths 与商店应用", "程序目录"];
+const NAMES: [&str; 3] = [
+    "开始菜单与桌面",
+    "安装记录、App Paths 与注册应用",
+    "程序目录",
+];
 
 #[derive(Clone, Default, Serialize)]
 pub struct ScanReport {
@@ -184,7 +188,7 @@ mod tests {
         invalidate(0);
         let incremental = scan(false);
         assert!(!incremental.report.full);
-        assert_eq!(incremental.report.rescanned, vec!["开始菜单"]);
+        assert_eq!(incremental.report.rescanned, vec!["开始菜单与桌面"]);
         state().lock().unwrap().full_at = Some(Instant::now() - Duration::from_secs(301));
         assert!(full_due());
         assert!(scan(false).report.full);

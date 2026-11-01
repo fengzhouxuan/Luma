@@ -2,7 +2,7 @@
 
 适用于 Windows 的轻量应用启动器。按 **`Alt+Shift+Space`** 唤出，用名称、拼音或首字母搜索应用，再按回车启动。
 
-当前源码版本：**1.2.1**。基于 Tauri 2、React、TypeScript 和 Rust，提供深色半透明界面、系统托盘与键盘操作。
+当前源码版本：**1.3.0**。基于 Tauri 2、React、TypeScript 和 Rust，提供深色半透明界面、系统托盘与键盘操作。
 
 [下载安装包](https://github.com/fengzhouxuan/Luma/releases) · [更新日志](./CHANGELOG.md) · [反馈问题](https://github.com/fengzhouxuan/Luma/issues)
 
@@ -28,6 +28,7 @@ EXE 安装包默认安装到当前用户的 `%LOCALAPPDATA%\Luma`，并创建开
 - **杂项过滤**：默认隐藏卸载器、运行库、后台辅助组件和部分附属网页；「显示全部」可查看已发现但被过滤或手动隐藏的条目。
 - **应用图标**：优先读取快捷方式配置的图标资源，支持 EXE、ICO、DLL 与资源索引，并在需要时回退到程序图标。
 - **托盘管理**：提供显示、刷新、设置、诊断、重启和退出入口，菜单标明运行版本。
+- **窗口拖动**：按住搜索栏左侧的点阵手柄或顶部空白处移动窗口，搜索框与应用按钮仍可正常操作；隐藏后再唤醒保留本次运行的位置。
 - **应用诊断**：查看来源、路径、快捷方式、参数、工作目录、过滤原因，以及本次运行的扫描、图标和启动记录。
 
 启动次数和最近使用时间只保存在本机配置中，不上传到服务端。
@@ -45,6 +46,7 @@ EXE 安装包默认安装到当前用户的 `%LOCALAPPDATA%\Luma`，并创建开
 | 应用上的 `★` | 置顶 / 取消置顶 |
 | 应用上的 `ⓘ` | 查看详情、诊断和手动隐藏入口 |
 | 搜索框右侧刷新按钮 | 强制重新扫描所有来源 |
+| 按住搜索栏左侧的点阵手柄或顶部空白处 | 拖动窗口 |
 | 底部「应用诊断」 | 查找已发现的应用及其过滤原因 |
 | 托盘图标右键 | 打开管理菜单，彻底退出请选「退出 Luma」 |
 
@@ -56,13 +58,17 @@ EXE 安装包默认安装到当前用户的 `%LOCALAPPDATA%\Luma`，并创建开
 
 | 来源 | 发现方式 |
 | --- | --- |
-| 开始菜单 | 用户和公共开始菜单中的 `.lnk` 快捷方式 |
+| 快捷方式 | 系统已知文件夹中的用户/公共开始菜单与桌面，支持 `.lnk`、ClickOnce `.appref-ms` 和游戏协议 `.url`；兼容桌面重定向 |
 | App Paths | 用户及系统的应用路径注册项，读取 32/64 位视图 |
 | 安装记录 | 用户及系统的 32/64 位卸载注册项，仅选择可确认的应用 EXE |
 | 商店 / MSIX 应用 | Windows AppsFolder 中的注册应用，使用稳定的 AUMID 识别和激活，支持没有 `.lnk` 的 ChatGPT 等应用 |
+| 传统注册应用 | AppsFolder 的 Win32 入口，保留参数并通过原 Shell 项启动；补充可见 GUI 文件关联应用 |
+| 便携应用 | `%LOCALAPPDATA%\Programs` 的浅层 GUI 程序、WinGet Links、Scoop 的 `current` 目录，支持 `SCOOP` / `SCOOP_GLOBAL` 自定义根目录 |
 | 程序目录 | 各盘符根目录的 `game`、`Games`、`游戏` 目录及用户添加的目录，最多扫描 8 层 |
 
 程序目录扫描跳过部分辅助程序和 `lib`、`node_modules` 目录。额外目录建议选择具体应用或游戏目录，避免使用整个磁盘根目录。
+
+安装记录还会在 `bin`、`Application`、`app`、`current` 等已知布局及最新的 Squirrel `app-*` 版本目录中查找同名主程序。完整的安装方式覆盖、已知边界和资料来源见 [扫描覆盖说明](./docs/discovery-coverage.md)。任意目录中、没有任何注册或快捷方式的绿色软件仍需添加额外扫描目录。
 
 ### 什么时候更新
 
@@ -162,6 +168,8 @@ src-tauri/src/
   lib.rs                 快捷方式和目录发现、热键及窗口管理
   discovery.rs           App Paths 与安装记录发现
   packaged.rs            商店/MSIX 应用发现、Shell 图标与激活
+  shortcuts.rs           已知文件夹中的快捷方式、ClickOnce 与游戏协议入口
+  portable.rs            用户程序、WinGet 与 Scoop 的 GUI 程序发现
   catalog.rs             来源缓存、去重和增量扫描
   watcher.rs             Windows 目录与注册表通知
   launch.rs              快捷方式启动与目标回退

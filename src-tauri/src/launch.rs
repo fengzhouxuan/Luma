@@ -36,8 +36,31 @@ pub fn launch_entry(app: &AppEntry, admin: bool) -> Result<(), String> {
         }
         return crate::packaged::activate(id, &app.arguments);
     }
+    #[cfg(windows)]
+    if crate::packaged::is_shell_item(&app.path) {
+        if admin {
+            return Err("该注册应用没有直接程序路径，不支持以管理员身份启动".into());
+        }
+        return crate::packaged::activate_shell(&app.path);
+    }
+    if admin
+        && (app.path.contains("://")
+            || Path::new(&app.path)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("appref-ms")))
+    {
+        return Err("协议或 ClickOnce 入口不支持以管理员身份启动".into());
+    }
     // 普通启动交给 Shell 打开原快捷方式，保留其全部启动语义。
     if !admin {
+        #[cfg(windows)]
+        if let Some(shortcut) = app
+            .shortcut_path
+            .as_deref()
+            .filter(|path| crate::packaged::is_shell_item(path))
+        {
+            return crate::packaged::activate_shell(shortcut);
+        }
         if let Some(shortcut) = app
             .shortcut_path
             .as_deref()

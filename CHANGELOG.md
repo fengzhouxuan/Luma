@@ -4,6 +4,15 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.0] - 2026-11-01
+
+### 新增
+
+- 搜索栏拖动手柄和顶部空白区域可原生拖动窗口，不影响输入和按钮操作。
+- 补充桌面、公共桌面、ClickOnce `.appref-ms`、游戏协议 `.url` 和 AppsFolder 传统桌面应用入口。
+- 补充用户程序目录、WinGet Links、Scoop current 目录与可见 GUI 文件关联应用；便携目录通过 PE 子系统过滤命令行工具。
+- 安装记录支持 `bin`、`Application`、`app`、`current` 和 Squirrel 最新版本目录；新增安装方式覆盖与边界说明。
+
 ## [1.2.1] - 2026-11-01
 
 ### 修复

@@ -49,6 +49,8 @@ body,
 }
 
 .search-bar {
+  -webkit-app-region: drag;
+  app-region: drag;
   padding: 20px 28px 12px;
   flex-shrink: 0;
   display: flex;
@@ -57,6 +59,8 @@ body,
 }
 
 .search-bar input {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
   flex: 1;
   padding: 12px 18px;
   font-size: 15px;
@@ -68,7 +72,35 @@ body,
   transition: border-color 0.2s ease-out;
 }
 
+.window-drag-handle {
+  -webkit-app-region: drag;
+  app-region: drag;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 24px;
+  height: 42px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--mv-text-muted);
+  background: transparent;
+  cursor: grab;
+  touch-action: none;
+}
+.window-drag-handle::before {
+  content: "";
+  width: 12px;
+  height: 18px;
+  background: radial-gradient(circle, currentColor 1.4px, transparent 1.6px) 0 0 / 6px 6px;
+  pointer-events: none;
+}
+.window-drag-handle:hover { color: var(--mv-text); background: rgba(255,255,255,.06); }
+.window-drag-handle:active { cursor: grabbing; }
+.window-drag-handle:focus-visible { outline: 1px solid var(--mv-accent); }
+
 .settings-btn {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
   flex-shrink: 0;
   width: 42px;
   height: 42px;
@@ -406,6 +438,8 @@ body,
 /* ==================== 设置面板 ==================== */
 
 .settings-overlay {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.35);

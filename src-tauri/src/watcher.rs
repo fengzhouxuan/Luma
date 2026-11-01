@@ -123,6 +123,7 @@ mod windows {
                 for path in [
                     r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths",
                     r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+                    r"SOFTWARE\Classes\Applications",
                     r"SOFTWARE\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages",
                     r"SOFTWARE\Classes\ActivatableClasses\Package",
                 ] {
@@ -140,11 +141,16 @@ mod windows {
     }
 
     fn directory_watches() -> Vec<DirectoryWatch> {
-        let mut roots: Vec<(PathBuf, usize)> = crate::start_menu_dirs()
+        let mut roots: Vec<(PathBuf, usize)> = crate::shortcuts::roots()
             .into_iter()
-            .map(|path| (path, 0))
+            .map(|(path, _)| (path, 0))
             .collect();
         roots.extend(crate::game_roots().into_iter().map(|path| (path, 2)));
+        roots.extend(
+            crate::portable::roots()
+                .into_iter()
+                .map(|(path, _)| (path, 2)),
+        );
         roots
             .into_iter()
             .filter(|(path, _)| path.is_dir())

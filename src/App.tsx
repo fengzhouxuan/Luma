@@ -488,7 +488,8 @@ function App() {
 
   return (
     <div className="launchpad" onKeyDown={handleKeyDown}>
-      <div className="search-bar">
+      <div className="search-bar" data-tauri-drag-region>
+        <button type="button" className="window-drag-handle" aria-label="拖动窗口" title="按住拖动窗口" data-tauri-drag-region />
         <input
           ref={inputRef}
           type="text"

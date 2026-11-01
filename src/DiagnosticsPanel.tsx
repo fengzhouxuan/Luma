@@ -21,7 +21,7 @@ export function DiagnosticsPanel({ apps, config, snapshot, initialId, onClose, o
   const icon = snapshot?.events.find((event) => event.stage === "图标" && (event.path === app?.shortcut_path || event.path === app?.path));
   const lastLaunch = snapshot?.events.find((event) => event.stage === "启动" && event.app_id === app?.id);
   const report = snapshot?.report;
-  const packaged = app?.path.startsWith("shell:AppsFolder\\") ?? false;
+  const shellManaged = !!app && (!!app.shortcut_path || app.path.startsWith("shell:AppsFolder\\") || app.path.startsWith("::{"));
   return <div className="settings-overlay" onClick={onClose}>
     <section className="diagnostics-panel" onClick={(event) => event.stopPropagation()} aria-label="应用诊断">
       <div className="settings-header"><span>应用诊断 <small>Luma {snapshot?.version ?? ""}</small></span>
@@ -41,8 +41,8 @@ export function DiagnosticsPanel({ apps, config, snapshot, initialId, onClose, o
             <button className="btn" onClick={() => onHide(app)}>{config?.hidden_apps?.includes(app.id) ? "取消手动隐藏" : "手动隐藏"}</button></div>
           <dl>{[
             ["扫描来源", app.source], ["来源位置", app.source_path], ["程序路径", app.path],
-            ["快捷方式", app.shortcut_path ?? (packaged ? "通过 Windows 应用标识启动" : "无，直接启动程序")], ["启动参数", app.arguments || "无"],
-            ["工作目录", app.working_dir ?? (packaged ? "由 Windows 应用模型管理" : "程序所在目录")], ["分类", app.category],
+            ["快捷方式", app.shortcut_path ?? (shellManaged ? "通过 Windows 应用标识启动" : "无，直接启动程序")], ["启动参数", app.arguments || "无"],
+            ["工作目录", app.working_dir ?? (shellManaged ? "由 Windows Shell 管理" : "程序所在目录")], ["分类", app.category],
             ["过滤原因", app.hidden_reason ?? "未过滤"], ["图标状态", icon?.message ?? (app.icon ? "已加载" : "尚未加载，或等待重试")],
             ["最近启动", lastLaunch?.message ?? "本次运行暂无启动记录"],
           ].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>

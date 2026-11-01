@@ -17,6 +17,9 @@ pub struct AppEntry {
 }
 
 pub fn identity(path: &str, arguments: &str) -> String {
+    if path.contains("://") {
+        return serde_json::to_string(&(path, arguments.trim())).expect("字符串可以序列化");
+    }
     let path = std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
     let path = path.to_string_lossy().replace('/', "\\").to_lowercase();
     serde_json::to_string(&(path, arguments.trim())).expect("字符串可以序列化")
@@ -49,6 +52,10 @@ mod tests {
     use super::*;
     #[test]
     fn distinguishes_profiles_and_same_named_programs() {
+        assert_ne!(
+            identity("com.epicgames.launcher://apps/GameID?action=launch", ""),
+            identity("com.epicgames.launcher://apps/gameid?action=launch", "")
+        );
         assert_ne!(
             identity(r"C:\Apps\editor.exe", "--profile work"),
             identity(r"C:\Apps\editor.exe", "--profile home")

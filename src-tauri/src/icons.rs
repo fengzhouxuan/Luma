@@ -343,7 +343,7 @@ fn cached_icon(cache: &mut IconCache, path: &str, shortcut_path: Option<&str>) -
 
 #[cfg(windows)]
 fn extract_icon(path: &str) -> Result<String, String> {
-    if crate::packaged::app_id(path).is_some() {
+    if crate::packaged::is_shell_item(path) {
         return crate::packaged::icon(path);
     }
     if !Path::new(path).is_file() {
