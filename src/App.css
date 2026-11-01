@@ -60,7 +60,7 @@ input[type="checkbox"] { accent-color: #8fd9da; }
 .launcher-content { display: flex; flex-direction: column; flex: 1; min-height: 0; position: relative; z-index: 1; }
 .search-bar, .main-area, .footer-hint { position: relative; z-index: 1; }
 .search-bar { -webkit-app-region: drag; app-region: drag; display: flex; align-items: center; gap: 10px; padding: 22px 24px 18px; flex-shrink: 0; }
-.window-drag-handle { -webkit-app-region: drag; app-region: drag; flex: 0 0 16px; height: 44px; border: 0; border-radius: 12px; color: var(--mv-text-muted); background: transparent; cursor: grab; touch-action: none; }
+.window-drag-handle { display: grid; place-items: center; -webkit-app-region: drag; app-region: drag; flex: 0 0 16px; height: 44px; border: 0; border-radius: 12px; color: var(--mv-text-muted); background: transparent; cursor: grab; touch-action: none; }
 .window-drag-handle::before { content: ""; display: block; width: 10px; height: 18px; background: radial-gradient(circle,currentColor 1.15px,transparent 1.4px) 0 0 / 5px 6px; pointer-events: none; }
 .window-drag-handle:hover { color: #d9fcf6; }
 .window-drag-handle:active { cursor: grabbing; }
@@ -89,7 +89,7 @@ input[type="checkbox"] { accent-color: #8fd9da; }
 .category-remove:hover { color: #ffbaba; background: #ff6b6b18; }
 .category-add { display: flex; gap: 5px; margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--mv-border); }
 .category-add input { min-width: 0; width: 100%; padding: 8px; font-size: 11px; color: var(--mv-text); background: #ffffff07; border: 1px solid var(--mv-border); border-radius: 12px; outline: none; }
-.category-add-btn { flex: 0 0 27px; border-radius: 11px; color: var(--mv-text-secondary); border: 1px solid var(--mv-border); background: var(--glass-face); font-size: 17px; }
+.category-add-btn { display: grid; place-items: center; padding: 0; line-height: 1; flex: 0 0 30px; border-radius: 11px; color: var(--mv-text-secondary); border: 1px solid var(--mv-border); background: var(--glass-face); font-size: 17px; }
 .category-add-btn:hover { background-color: #ffffff0f; }
 .app-grid { flex: 1; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill,minmax(100px,1fr)); gap: 12px; padding: 10px 20px 18px; align-content: start; scroll-padding-block: 12px; }
 .app-tile { scroll-margin-block: 8px; }
@@ -255,3 +255,13 @@ summary { cursor: pointer; }
   .app-wordmark { -webkit-text-fill-color: CanvasText; -webkit-text-stroke: 0; background: none; filter: none; }
   .app-tile.selected, .category-item.active { outline: 2px solid Highlight; }
 }
+
+/* Icon-only controls center SVG boxes, independent of font glyph baselines. */
+.category-add-btn > .ui-icon { width: 16px; height: 16px; }
+.category-remove { display: grid; place-items: center; padding: 0; }
+.category-remove > .ui-icon { width: 12px; height: 12px; }
+.settings-close > .ui-icon { width: 16px; height: 16px; }
+.tile-actions button > .ui-icon { width: 14px; height: 14px; }
+.tile-actions button.pinned > .ui-icon { fill: currentColor; }
+.toast button { display: grid; place-items: center; padding: 0; }
+.toast button > .ui-icon { width: 16px; height: 16px; }

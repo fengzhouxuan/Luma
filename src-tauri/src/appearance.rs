@@ -236,12 +236,18 @@ pub fn setup(window: &tauri::WebviewWindow) {
         }
         let _ = window.set_theme(Some(tauri::Theme::Dark));
         after_show(window);
-        match window_vibrancy::apply_acrylic(window, Some((18, 22, 38, 135))) {
+        // Windows 11's SYSTEMBACKDROP_TYPE covers the entire HWND rectangle.
+        // A valid GDI region alone does not prove this compositor material is clipped.
+        // Explicitly clear it, then use the accent blur path for our custom radius.
+        if let Err(error) = window_vibrancy::clear_acrylic(window) {
+            crate::diagnostics::record("窗口", "清除矩形材质", None, error.to_string());
+        }
+        match window_vibrancy::apply_blur(window, Some((18, 22, 38, 135))) {
             Ok(()) => crate::diagnostics::record(
                 "窗口",
                 "玻璃材质",
                 None,
-                "已启用 Windows 原生 Acrylic 桌面模糊",
+                "已禁用矩形 System Backdrop，启用原生 Accent Blur 圆角兼容路径",
             ),
             Err(error) => crate::diagnostics::record(
                 "窗口",

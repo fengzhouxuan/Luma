@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { UiIcon } from "./UiIcon";
 import type { AppEntry, Config, Diagnostics } from "./types";
 
 interface Props {
@@ -26,7 +27,7 @@ export function DiagnosticsPanel({ apps, config, snapshot, initialId, onClose, o
     <section data-focus-scope tabIndex={-1} role="dialog" aria-modal="true" className="diagnostics-panel" onClick={(event) => event.stopPropagation()} aria-label="应用诊断">
       <div className="settings-header"><span>应用诊断 <small>Luma {snapshot?.version ?? ""}</small></span>
         <div className="panel-actions"><button className="btn btn-sm" onClick={onRefresh}>刷新诊断</button>
-          <button className="settings-close" aria-label="关闭诊断" onClick={onClose}>×</button></div></div>
+          <button className="settings-close" aria-label="关闭诊断" onClick={onClose}><UiIcon name="close"/></button></div></div>
       <div className="diagnostics-summary">已发现 {apps.length} 个应用 · {report?.full ? "全量扫描" : "增量检查"} {report?.duration_ms ?? 0}ms
         <br/>监听 {report?.watched_directories ?? 0} 个目录、{report?.watched_registry_keys ?? 0} 个注册表位置
         {report?.rescanned.length ? ` · 本轮更新：${report.rescanned.join("、")}` : " · 本轮复用扫描缓存"}</div>

@@ -607,7 +607,7 @@ function App() {
                   }}
                   title={`删除分类 ${cat}`}
                 >
-                  ×
+                  <UiIcon name="close"/>
                 </button>
               )}
             </div>
@@ -639,8 +639,9 @@ function App() {
                 }
               }}
               title="添加分类"
+              aria-label="添加分类"
             >
-              +
+              <UiIcon name="plus"/>
             </button>
           </div>
         </div>
@@ -672,9 +673,9 @@ function App() {
                 <div className="tile-actions" onContextMenu={(event) => event.stopPropagation()}>
                   <button className={config?.pinned_apps?.includes(app.id) ? "pinned" : ""}
                     aria-label={`${config?.pinned_apps?.includes(app.id) ? "取消置顶" : "置顶"} ${app.name}`}
-                    title="常用应用置顶" onClick={(event) => { event.stopPropagation(); void togglePinned(app); }}>★</button>
+                    title="常用应用置顶" onClick={(event) => { event.stopPropagation(); void togglePinned(app); }}><UiIcon name="star"/></button>
                   <button aria-label={`查看 ${app.name} 详情`} title="应用详情与诊断"
-                    onClick={(event) => { event.stopPropagation(); openDiagnostics(app.id); }}>ⓘ</button>
+                    onClick={(event) => { event.stopPropagation(); openDiagnostics(app.id); }}><UiIcon name="info"/></button>
                 </div>
                 <div className="app-icon">
                   {app.icon ? (
@@ -958,7 +959,7 @@ function App() {
         onEdit={() => { setEditor({ app: menu.app }); setMenu(null); }} onDetails={() => { openDiagnostics(menu.app.id); setMenu(null); }}
         onLaunch={admin => { void launch(menu.app, admin); setMenu(null); }} onPin={() => { void togglePinned(menu.app); setMenu(null); }}
         onHide={() => { void toggleHidden(menu.app); setMenu(null); }} onMessage={setNotice}/>}
-      {notice && <div className="toast" role="status"><span>{notice}</span><button aria-label="关闭提示" onClick={() => setNotice("")}>×</button></div>}
+      {notice && <div className="toast" role="status"><span>{notice}</span><button aria-label="关闭提示" onClick={() => setNotice("")}><UiIcon name="close"/></button></div>}
     </div>
   );
 }
