@@ -60,6 +60,12 @@ pub struct Config {
     /// 仅由用户主动拖动更新；自动断屏回退不覆盖。
     #[serde(default)]
     pub window_position: Option<crate::position::SavedPosition>,
+    #[serde(default)]
+    pub manual_apps: Vec<crate::personal::ManualApp>,
+    #[serde(default)]
+    pub aliases: std::collections::HashMap<String, Vec<String>>,
+    #[serde(default)]
+    pub launch_overrides: std::collections::HashMap<String, crate::personal::LaunchOverride>,
 }
 
 impl Default for Config {
@@ -82,6 +88,9 @@ impl Default for Config {
             hidden_apps: Vec::new(),
             usage: Default::default(),
             window_position: None,
+            manual_apps: Vec::new(),
+            aliases: Default::default(),
+            launch_overrides: Default::default(),
         }
     }
 }
@@ -164,21 +173,7 @@ pub fn get() -> Config {
 /// 初始化（启动时调用一次）
 pub fn init() {
     let mut cfg = load();
-    // 同步实际的自启状态（计划任务是否启用）
-    #[cfg(windows)]
-    {
-        if let Ok(output) = std::process::Command::new("schtasks")
-            .args(["/Query", "/TN", "LaunchpadElevated", "/FO", "CSV", "/NH"])
-            .output()
-        {
-            let text = String::from_utf8_lossy(&output.stdout);
-            // CSV 格式最后一列是状态，可能为 "Ready"/"Running"（启用）或 "Disabled"（禁用）
-            // 中英文系统都通过是否含 "Disabled"/"禁用" 判断
-            let enabled =
-                output.status.success() && !text.contains("Disabled") && !text.contains("禁用");
-            cfg.autostart = enabled;
-        }
-    }
+    cfg.autostart = crate::autostart::sync();
     let _ = save_inner(&cfg);
     let _ = CONFIG.set(Mutex::new(cfg));
 }
@@ -208,34 +203,6 @@ pub fn set_config(cfg: Config) -> Result<(), String> {
     }
 
     Ok(())
-}
-
-/// 设置开机自启（通过计划任务 LaunchpadElevated 的启用/禁用实现）
-#[tauri::command]
-pub fn set_autostart(enabled: bool) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-        let action = if enabled { "/Enable" } else { "/Disable" };
-        let output = std::process::Command::new("schtasks")
-            .args(["/Change", "/TN", "LaunchpadElevated", action])
-            .output()
-            .map_err(|e| format!("执行 schtasks 失败: {}", e))?;
-
-        if output.status.success() {
-            // 同步更新配置里的 autostart 字段
-            update(|cfg| cfg.autostart = enabled)?;
-            Ok(())
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            Err(format!("设置自启失败: {}", stderr.trim()))
-        }
-    }
-
-    #[cfg(not(windows))]
-    {
-        let _ = enabled;
-        Err("当前平台不支持".to_string())
-    }
 }
 
 /// 设置"显示全部"开关（是否显示被自动过滤的噪音应用）
@@ -335,12 +302,23 @@ mod tests {
     #[test]
     fn legacy_config_gets_defaults_for_new_preferences() {
         let mut old = serde_json::to_value(Config::default()).unwrap();
-        for field in ["usage", "pinned_apps", "hidden_apps", "window_position"] {
+        for field in [
+            "usage",
+            "pinned_apps",
+            "hidden_apps",
+            "window_position",
+            "manual_apps",
+            "aliases",
+            "launch_overrides",
+        ] {
             old.as_object_mut().unwrap().remove(field);
         }
         let cfg: Config = serde_json::from_value(old).unwrap();
         assert!(cfg.pinned_apps.is_empty() && cfg.hidden_apps.is_empty() && cfg.usage.is_empty());
         assert!(cfg.window_position.is_none());
+        assert!(
+            cfg.manual_apps.is_empty() && cfg.aliases.is_empty() && cfg.launch_overrides.is_empty()
+        );
     }
     #[test]
     fn usage_is_per_identity_and_counts_successful_launches() {

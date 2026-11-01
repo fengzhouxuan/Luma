@@ -34,3 +34,12 @@ test('same-name apps retain distinct identities and stable ordering', () => {
   const ranked = rankApps([app('work', 'Editor'), app('home', 'Editor')], 'editor');
   assert.deepEqual(Array.from(ranked, ({ id }) => id), ['home', 'work']);
 });
+
+test('search aliases support pinyin and exact names retain precedence without changing empty search ranking', () => {
+  const items = [app('editor', 'Visual Studio Code'), app('literal', '编辑器')];
+  const preferences = { aliases: { editor: ['编辑器', 'workspace'] }, pinned_apps: ['editor'] };
+  assert.deepEqual(Array.from(rankApps(items, '编辑器', preferences), ({id})=>id), ['literal', 'editor']);
+  assert.deepEqual(Array.from(rankApps(items, 'bjq', preferences), ({id})=>id), ['literal', 'editor']);
+  assert.equal(rankApps(items, 'workspace', preferences)[0].id, 'editor');
+  assert.equal(rankApps(items, '', preferences)[0].id, 'editor');
+});

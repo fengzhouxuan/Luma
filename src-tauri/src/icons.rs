@@ -2,8 +2,44 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{OnceLock, mpsc};
 use std::time::{Duration, Instant, SystemTime};
+
+static REQUESTS: AtomicU64 = AtomicU64::new(0);
+static COMPLETED: AtomicU64 = AtomicU64::new(0);
+static CACHE_HITS: AtomicU64 = AtomicU64::new(0);
+static QUEUE_US: AtomicU64 = AtomicU64::new(0);
+static MAX_QUEUE_US: AtomicU64 = AtomicU64::new(0);
+static EXTRACTION_US: AtomicU64 = AtomicU64::new(0);
+static EXTRACTIONS: AtomicU64 = AtomicU64::new(0);
+static TIMEOUTS: AtomicU64 = AtomicU64::new(0);
+#[derive(serde::Serialize)]
+pub struct Metrics {
+    pub requests: u64,
+    pub completed: u64,
+    pub cache_hits: u64,
+    pub timeouts: u64,
+    pub average_queue_ms: f64,
+    pub max_queue_ms: f64,
+    pub average_extraction_ms: f64,
+}
+pub fn metrics() -> Metrics {
+    let completed = COMPLETED.load(Ordering::Relaxed);
+    Metrics {
+        requests: REQUESTS.load(Ordering::Relaxed),
+        completed,
+        cache_hits: CACHE_HITS.load(Ordering::Relaxed),
+        timeouts: TIMEOUTS.load(Ordering::Relaxed),
+        average_queue_ms: QUEUE_US.load(Ordering::Relaxed) as f64
+            / completed.max(1) as f64
+            / 1000.0,
+        max_queue_ms: MAX_QUEUE_US.load(Ordering::Relaxed) as f64 / 1000.0,
+        average_extraction_ms: EXTRACTION_US.load(Ordering::Relaxed) as f64
+            / EXTRACTIONS.load(Ordering::Relaxed).max(1) as f64
+            / 1000.0,
+    }
+}
 
 const FAILURE_TTL: Duration = Duration::from_secs(30);
 const SUCCESS_TTL: Duration = Duration::from_secs(24 * 60 * 60);
@@ -204,6 +240,7 @@ static WORKER: OnceLock<Result<mpsc::SyncSender<IconRequest>, String>> = OnceLoc
 
 #[tauri::command]
 pub async fn get_icon(path: String, shortcut_path: Option<String>) -> Option<String> {
+    REQUESTS.fetch_add(1, Ordering::Relaxed);
     tauri::async_runtime::spawn_blocking(move || {
         let source = shortcut_path.as_deref().unwrap_or(&path).to_string();
         let worker = WORKER.get_or_init(start_worker);
@@ -230,6 +267,9 @@ pub async fn get_icon(path: String, shortcut_path: Option<String>) -> Option<Str
             Ok(icon) => icon,
             Err(error) => {
                 eprintln!("[luma icons] 等待图标失败: {}", error);
+                if matches!(error, mpsc::RecvTimeoutError::Timeout) {
+                    TIMEOUTS.fetch_add(1, Ordering::Relaxed);
+                }
                 crate::diagnostics::record("图标", &source, None, format!("等待图标失败: {error}"));
                 None
             }
@@ -268,7 +308,11 @@ fn start_worker() -> Result<mpsc::SyncSender<IconRequest>, String> {
                 if request.queued.elapsed() >= REQUEST_TIMEOUT {
                     continue;
                 }
+                let waited = request.queued.elapsed().as_micros() as u64;
+                QUEUE_US.fetch_add(waited, Ordering::Relaxed);
+                MAX_QUEUE_US.fetch_max(waited, Ordering::Relaxed);
                 let icon = cached_icon(&mut cache, &request.path, request.shortcut_path.as_deref());
+                COMPLETED.fetch_add(1, Ordering::Relaxed);
                 let _ = request.reply.send(icon);
             }
         })
@@ -292,6 +336,7 @@ fn cached_icon(cache: &mut IconCache, path: &str, shortcut_path: Option<&str>) -
     }
     let now = Instant::now();
     if let Some(icon) = cache.get(&key, &fingerprint, now) {
+        CACHE_HITS.fetch_add(1, Ordering::Relaxed);
         return icon;
     }
     let mut retry = false;
@@ -337,6 +382,8 @@ fn cached_icon(cache: &mut IconCache, path: &str, shortcut_path: Option<&str>) -
     crate::diagnostics::record("图标", shortcut_path.unwrap_or(path), None, message);
     // 虚拟 Shell 项没有文件时间戳，缩短缓存，避免应用更新后长期使用旧图标。
     let short_lived = retry || target.starts_with("shell:AppsFolder\\");
+    EXTRACTIONS.fetch_add(1, Ordering::Relaxed);
+    EXTRACTION_US.fetch_add(now.elapsed().as_micros() as u64, Ordering::Relaxed);
     cache.put(key, fingerprint, icon.clone(), short_lived, now);
     icon
 }

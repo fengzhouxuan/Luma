@@ -44,6 +44,7 @@ pub struct Snapshot {
     pub executable: String,
     pub report: crate::catalog::ScanReport,
     pub events: Vec<Event>,
+    pub icons: crate::icons::Metrics,
 }
 
 #[tauri::command]
@@ -54,6 +55,7 @@ pub fn get_diagnostics() -> Snapshot {
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default(),
         report: crate::catalog::report(),
+        icons: crate::icons::metrics(),
         events: EVENTS
             .get_or_init(Default::default)
             .lock()

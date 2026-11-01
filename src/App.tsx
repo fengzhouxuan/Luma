@@ -4,7 +4,10 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { rankApps } from "./search";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
-import type { AppEntry, Config, HotkeyConfig, Usage, ScanResult, Diagnostics } from "./types";
+import { AppEditor, type EditorTarget } from "./AppEditor";
+import { AppMenu } from "./AppMenu";
+import { ManagementTools, ImportPreview } from "./ManagementTools";
+import type { AppEntry, Config, HotkeyConfig, Usage, ScanResult, Diagnostics, ManualApp, AutostartStatus, BackupPreview } from "./types";
 import { IconLoader, iconKey, type IconTarget } from "./iconLoader";
 import "./App.css";
 
@@ -31,6 +34,12 @@ function App() {
   const [diagnosticId, setDiagnosticId] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<Diagnostics | null>(null);
   const [config, setConfig] = useState<Config | null>(null);
+  const [editor, setEditor] = useState<EditorTarget | null>(null);
+  const [menu, setMenu] = useState<{ app: AppEntry; x: number; y: number } | null>(null);
+  const [preview, setPreview] = useState<BackupPreview | null>(null);
+  const [autostart, setAutostart] = useState<AutostartStatus | null>(null);
+  const [autostartBusy, setAutostartBusy] = useState(false);
+  const [notice, setNotice] = useState("");
   const [capturing, setCapturing] = useState(false);
   const [hotkeyDraft, setHotkeyDraft] = useState<HotkeyConfig | null>(null);
   const [extraDirDraft, setExtraDirDraft] = useState("");
@@ -57,6 +66,28 @@ function App() {
   }
 
   useEffect(() => () => iconLoader.current?.reset(), []);
+
+  useEffect(() => { void invoke("set_overlay_open", { open: settingsOpen || diagnosticsOpen || !!editor || !!menu || !!preview }); }, [settingsOpen, diagnosticsOpen, editor, menu, preview]);
+  useEffect(() => () => { void invoke("set_overlay_open", { open: false }); }, []);
+  useEffect(() => {
+    let disposed = false; let stop: (() => void) | undefined;
+    void getCurrentWindow().onDragDropEvent(({ payload }) => {
+      if (payload.type !== "drop" || disposed) return;
+      if (payload.paths.length !== 1) { setNotice("请每次拖入一个 EXE、快捷方式或 ClickOnce 文件"); return; }
+      void invoke<ManualApp>("prepare_manual_app", { path: payload.paths[0] }).then(manual => {
+        if (!disposed) { setSettingsOpen(false); setDiagnosticsOpen(false); setEditor({ manual }); }
+      }).catch(error => { if (!disposed) setNotice(String(error)); });
+    }).then(unlisten => { if (disposed) unlisten(); else stop = unlisten; }).catch(error => console.error("监听文件拖入失败", error));
+    return () => { disposed = true; stop?.(); };
+  }, []);
+
+  const addManualApp = async () => {
+    try {
+      const manual = await invoke<ManualApp | null>("pick_manual_app");
+      if (manual) { setSettingsOpen(false); setDiagnosticsOpen(false); setEditor({ manual }); }
+    } catch (error) { setNotice(String(error)); }
+  };
+  const personalSaved = (next: Config) => { setConfig(next); setEditor(null); setPreview(null); void scan(false, true); };
 
   // 共用一个扫描任务；目录变更发生在扫描中时，再补扫一次。
   const scan = useCallback((rescan = false, changed = false): Promise<void> => {
@@ -121,6 +152,7 @@ function App() {
   };
 
   useEffect(() => { if (settingsOpen) void refreshDiagnostics(); }, [settingsOpen, refreshDiagnostics]);
+  useEffect(() => { if (settingsOpen) void invoke<AutostartStatus>("get_autostart_status").then(setAutostart).catch(error => setNotice(String(error))); }, [settingsOpen]);
 
   useEffect(() => {
     void scan();
@@ -173,7 +205,7 @@ function App() {
     };
     window.addEventListener("keydown", onGlobalKeyDown);
     return () => window.removeEventListener("keydown", onGlobalKeyDown);
-  }, [settingsOpen, diagnosticsOpen, capturing]);
+  }, [settingsOpen, diagnosticsOpen, capturing, editor, preview, menu]);
 
   // 应用外观配置到 CSS 变量
   useEffect(() => {
@@ -286,6 +318,9 @@ function App() {
 
   // 关闭启动器（含设置面板）
   const hideLauncher = () => {
+    if (preview) { setPreview(null); return; }
+    if (editor) { setEditor(null); return; }
+    if (menu) { setMenu(null); return; }
     if (diagnosticsOpen) { setDiagnosticsOpen(false); setTimeout(() => inputRef.current?.focus(), 0); return; }
     if (settingsOpen) {
       setSettingsOpen(false);
@@ -320,7 +355,7 @@ function App() {
     }
 
     // 设置面板打开时，不处理网格导航
-    if (settingsOpen || diagnosticsOpen) return;
+    if (settingsOpen || diagnosticsOpen || editor || preview || menu) return;
 
     // 搜索框以外的输入控件保留自己的键盘行为。
     const target = e.target;
@@ -498,6 +533,7 @@ function App() {
           onChange={(e) => setQuery(e.target.value)}
           autoFocus
         />
+        <button className="settings-btn" title="添加应用" aria-label="添加应用" onClick={() => void addManualApp()}>＋</button>
         <button
           className={`settings-btn refresh-btn${refreshing ? " refreshing" : ""}`}
           onClick={() => void scan(true)}
@@ -593,10 +629,10 @@ function App() {
                 onClick={() => launch(app)}
                 onContextMenu={(e) => {
                   e.preventDefault();
-                  launch(app, true);
+                  setMenu({ app, x: e.clientX, y: e.clientY });
                 }}
                 onMouseEnter={() => setSelectedIndex(idx)}
-                title={`${app.name}\n${app.path}${app.arguments ? `\n${app.arguments}` : ""}\n单击启动 · 右键以管理员启动 · 当前分类：${app.category}`}
+                title={`${app.name}\n${app.path}${app.arguments ? `\n${app.arguments}` : ""}\n单击启动 · 右键操作菜单 · 当前分类：${app.category}`}
               >
                 <div className="tile-actions" onContextMenu={(event) => event.stopPropagation()}>
                   <button className={config?.pinned_apps?.includes(app.id) ? "pinned" : ""}
@@ -622,7 +658,7 @@ function App() {
       </div>
 
       <div className="footer-hint">
-        <span>单击启动 · 右键管理员 · ↑↓←→ 导航 · Ctrl+回车 管理员 · Esc 隐藏</span>
+        <span>单击启动 · 右键菜单 · ↑↓←→ 导航 · Ctrl+回车 管理员 · Esc 隐藏</span>
         <button className="footer-link" onClick={() => openDiagnostics(null)}>应用诊断</button>
         <label className="show-all-toggle" title="勾选后显示被自动过滤的卸载程序、命令行工具等">
           <input
@@ -668,6 +704,8 @@ function App() {
                 <button className="btn" onClick={() => void invoke("quit_app")}>退出 Luma</button>
               </div>
             </div>
+
+            <ManagementTools onImported={personalSaved} onAdd={() => void addManualApp()} onPreview={setPreview}/>
 
             {/* 唤醒快捷键 */}
             <div className="settings-section">
@@ -730,21 +768,30 @@ function App() {
                 <label className="switch">
                   <input
                     type="checkbox"
+                    aria-label="登录时自动启动 Luma"
+                    disabled={autostartBusy}
                     checked={config.autostart}
                     onChange={async (e) => {
                       const enabled = e.target.checked;
                       try {
-                        await invoke("set_autostart", { enabled });
-                        setConfig({ ...config, autostart: enabled });
+                        const status = await invoke<AutostartStatus>("set_autostart", { enabled });
+                        setAutostart(status);
+                        setConfig(current => current ? { ...current, autostart: status.enabled } : current);
                       } catch (err) {
                         console.error("设置自启失败", err);
-                        alert(`设置自启失败: ${err}`);
+                        setNotice(`设置自启失败: ${err}`);
                       }
                     }}
                   />
                   <span className="switch-slider"></span>
                 </label>
               </div>
+              {autostart?.legacy && <div className="settings-hint">检测到旧版计划任务。迁移需在 Windows 管理员提示中确认，随后改用当前用户自启项。<button className="btn btn-sm" disabled={autostartBusy} onClick={async () => {
+                setAutostartBusy(true);
+                try { const status = await invoke<AutostartStatus>("migrate_legacy_autostart"); setAutostart(status); setConfig(current => current ? { ...current, autostart: status.enabled } : current); setNotice("已迁移到当前用户登录自启"); }
+                catch (error) { setNotice(String(error)); }
+                finally { setAutostartBusy(false); }
+              }}>{autostartBusy ? "等待 Windows 管理员确认…" : "管理员迁移旧版自启"}</button></div>}
             </div>
 
             {/* 窗口外观 */}
@@ -882,6 +929,13 @@ function App() {
       {diagnosticsOpen && <DiagnosticsPanel key={diagnosticId ?? "all"} apps={categorizedApps} config={config}
         snapshot={snapshot} initialId={diagnosticId} onClose={() => { setDiagnosticsOpen(false); setTimeout(() => inputRef.current?.focus(), 0); }}
         onRefresh={() => void refreshDiagnostics()} onPin={(app) => void togglePinned(app)} onHide={(app) => void toggleHidden(app)}/>}
+      {editor && config && <AppEditor key={"app" in editor ? editor.app.id : editor.manual.id} target={editor} config={config} onClose={() => setEditor(null)} onSaved={personalSaved}/>}
+      {preview && <ImportPreview preview={preview} onClose={() => setPreview(null)} onImported={personalSaved}/>}
+      {menu && <AppMenu app={menu.app} config={config} x={menu.x} y={menu.y} onClose={() => setMenu(null)}
+        onEdit={() => { setEditor({ app: menu.app }); setMenu(null); }} onDetails={() => { openDiagnostics(menu.app.id); setMenu(null); }}
+        onLaunch={admin => { void launch(menu.app, admin); setMenu(null); }} onPin={() => { void togglePinned(menu.app); setMenu(null); }}
+        onHide={() => { void toggleHidden(menu.app); setMenu(null); }} onMessage={setNotice}/>}
+      {notice && <div className="toast" role="status"><span>{notice}</span><button aria-label="关闭提示" onClick={() => setNotice("")}>×</button></div>}
     </div>
   );
 }

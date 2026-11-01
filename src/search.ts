@@ -2,7 +2,7 @@ import { pinyin } from "pinyin-pro";
 import type { Usage } from "./types";
 
 interface Searchable { id: string; name: string; path: string }
-interface Preferences { pinned_apps?: string[]; usage?: Record<string, Usage> }
+interface Preferences { pinned_apps?: string[]; usage?: Record<string, Usage>; aliases?: Record<string, string[]> }
 const termsCache = new Map<string, { name: string; full: string; initials: string }>();
 const collator = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" });
 const normalize = (text: string) => text.toLowerCase().normalize("NFKD").replace(/\p{M}/gu, "").trim();
@@ -52,7 +52,7 @@ export function matchScore(name: string, query: string): number {
 
 export function rankApps<T extends Searchable>(apps: T[], query: string, preferences: Preferences = {}): T[] {
   const pins = new Set(preferences.pinned_apps ?? []);
-  return apps.map((app) => ({ app, score: matchScore(app.name, query) }))
+  return apps.map((app) => ({ app, score: Math.min(matchScore(app.name, query), ...(!query.trim() ? [] : (preferences.aliases?.[app.id] ?? []).map((alias) => matchScore(alias, query) + 2))) }))
     .filter(({ score }) => Number.isFinite(score))
     .sort((a, b) => a.score - b.score || Number(pins.has(b.app.id)) - Number(pins.has(a.app.id)) ||
       (preferences.usage?.[b.app.id]?.count ?? 0) - (preferences.usage?.[a.app.id]?.count ?? 0) ||

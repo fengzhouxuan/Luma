@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+mod autostart;
+mod backup;
 mod catalog;
 mod config;
 mod diagnostics;
@@ -9,10 +11,12 @@ mod discovery;
 mod icon_resource;
 mod icons;
 mod launch;
+mod personal;
 mod portable;
 mod position;
 mod runtime;
 mod shortcuts;
+mod updates;
 mod watcher;
 
 mod model;
@@ -897,8 +901,13 @@ mod double_alt {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if autostart::migration_helper() {
+        return;
+    }
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // 已有实例在运行：唤醒它的窗口，新实例随后自动退出
             runtime::show(app);
@@ -910,7 +919,22 @@ pub fn run() {
             hide_window,
             config::get_config,
             config::set_config,
-            config::set_autostart,
+            autostart::set_autostart,
+            autostart::get_autostart_status,
+            autostart::migrate_legacy_autostart,
+            personal::pick_manual_app,
+            personal::prepare_manual_app,
+            personal::save_manual_app,
+            personal::save_app_options,
+            personal::remove_manual_app,
+            personal::copy_app_path,
+            personal::reveal_app,
+            backup::export_config_backup,
+            backup::preview_config_import,
+            backup::import_config_backup,
+            updates::check_update,
+            updates::install_update,
+            runtime::set_overlay_open,
             config::set_show_all,
             config::set_extra_dirs,
             config::set_app_category,
@@ -953,7 +977,9 @@ pub fn run() {
                                 std::thread::spawn(move || {
                                     std::thread::sleep(std::time::Duration::from_millis(200));
                                     // 再次确认是否仍失焦，且窗口当前"由我们主动显示"（权威标志）
-                                    if let Ok(false) = win.is_focused() {
+                                    if !runtime::native_dialog_open()
+                                        && let Ok(false) = win.is_focused()
+                                    {
                                         if double_alt::WINDOW_VISIBLE.load(Ordering::SeqCst) {
                                             double_alt::WINDOW_VISIBLE
                                                 .store(false, Ordering::SeqCst);
@@ -986,7 +1012,7 @@ pub fn run() {
                             // 仅在窗口"由我们主动显示"时生效，避免后台误触发。
                             if double_alt::WINDOW_VISIBLE.load(Ordering::SeqCst) {
                                 let esc_now_down = double_alt::esc_down();
-                                if esc_now_down && !esc_prev_down {
+                                if esc_now_down && !esc_prev_down && runtime::esc_should_hide() {
                                     double_alt::WINDOW_VISIBLE.store(false, Ordering::SeqCst);
                                     let win = win.clone();
                                     let handle = handle.clone();

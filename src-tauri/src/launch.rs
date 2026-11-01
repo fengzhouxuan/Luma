@@ -10,7 +10,10 @@ pub struct LaunchResult {
 #[tauri::command]
 pub async fn launch_app(app_id: String, admin: bool) -> Result<LaunchResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let app = catalog::find(&app_id).ok_or("应用记录已失效，请刷新后重试")?;
+        let mut app = catalog::find(&app_id).ok_or("应用记录已失效，请刷新后重试")?;
+        if config::get().launch_overrides.contains_key(&app_id) {
+            app.shortcut_path = None;
+        }
         match launch_entry(&app, admin) {
             Ok(()) => {
                 diagnostics::record("启动", &app.path, Some(&app.id), "启动成功");

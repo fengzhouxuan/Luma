@@ -1,4 +1,46 @@
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use tauri::{Emitter, Manager};
+static NATIVE_DIALOGS: AtomicUsize = AtomicUsize::new(0);
+static OVERLAY: AtomicBool = AtomicBool::new(false);
+static ESC_QUIET_UNTIL: AtomicU64 = AtomicU64::new(0);
+fn elapsed_ms() -> u64 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_millis() as u64
+}
+fn quiet_esc() {
+    ESC_QUIET_UNTIL.store(elapsed_ms().saturating_add(300), Ordering::Release);
+}
+pub fn esc_should_hide() -> bool {
+    !overlay_open()
+        && !native_dialog_open()
+        && elapsed_ms() >= ESC_QUIET_UNTIL.load(Ordering::Acquire)
+}
+pub struct VisibilityHold;
+pub fn hold_visible() -> VisibilityHold {
+    NATIVE_DIALOGS.fetch_add(1, Ordering::AcqRel);
+    VisibilityHold
+}
+impl Drop for VisibilityHold {
+    fn drop(&mut self) {
+        quiet_esc();
+        NATIVE_DIALOGS.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+pub fn native_dialog_open() -> bool {
+    NATIVE_DIALOGS.load(Ordering::Acquire) > 0
+}
+pub fn overlay_open() -> bool {
+    OVERLAY.load(Ordering::Acquire)
+}
+#[tauri::command]
+pub fn set_overlay_open(open: bool) {
+    if OVERLAY.swap(open, Ordering::AcqRel) && !open {
+        quiet_esc();
+    }
+}
 
 pub fn show(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {

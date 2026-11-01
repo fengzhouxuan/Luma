@@ -12,6 +12,14 @@ const NAMES: [&str; 3] = [
 ];
 
 #[derive(Clone, Default, Serialize)]
+pub struct SourceMetric {
+    pub name: String,
+    pub duration_ms: u64,
+    pub count: usize,
+    pub updated_at: u64,
+}
+
+#[derive(Clone, Default, Serialize)]
 pub struct ScanReport {
     pub revision: u64,
     pub full: bool,
@@ -21,6 +29,7 @@ pub struct ScanReport {
     pub app_count: usize,
     pub watched_directories: usize,
     pub watched_registry_keys: usize,
+    pub sources: Vec<SourceMetric>,
 }
 
 #[derive(Clone, Serialize)]
@@ -35,6 +44,7 @@ struct Catalog {
     full_at: Option<Instant>,
     directories: Vec<String>,
     report: ScanReport,
+    personal_fingerprint: String,
 }
 
 impl Default for Catalog {
@@ -45,6 +55,7 @@ impl Default for Catalog {
             full_at: None,
             directories: Vec::new(),
             report: ScanReport::default(),
+            personal_fingerprint: String::new(),
         }
     }
 }
@@ -109,14 +120,29 @@ fn merged(sources: &[Vec<AppEntry>; 3]) -> Vec<AppEntry> {
 }
 
 pub fn find(id: &str) -> Option<AppEntry> {
+    let cfg = crate::config::get();
+    crate::personal::entries(&cfg)
+        .into_iter()
+        .find(|app| app.id == id)
+        .or_else(|| {
+            state()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .sources
+                .iter()
+                .flatten()
+                .find(|app| app.id == id)
+                .cloned()
+                .map(|app| crate::personal::effective(app, &cfg))
+        })
+}
+
+pub fn preferences_changed() {
     state()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .sources
-        .iter()
-        .flatten()
-        .find(|app| app.id == id)
-        .cloned()
+        .report
+        .revision += 1;
 }
 
 pub fn scan(force: bool) -> ScanResult {
@@ -124,7 +150,8 @@ pub fn scan(force: bool) -> ScanResult {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let started = Instant::now();
-    let directories = crate::config::get().extra_dirs;
+    let cfg = crate::config::get();
+    let directories = cfg.extra_dirs.clone();
     let (full, dirty) = {
         let mut state = state()
             .lock()
@@ -145,22 +172,49 @@ pub fn scan(force: bool) -> ScanResult {
     let mut replacements = Vec::new();
     for (source, changed) in dirty.iter().enumerate() {
         if *changed {
-            replacements.push((source, crate::scan_source(source)));
+            let started = Instant::now();
+            let apps = crate::scan_source(source);
+            let metric = SourceMetric {
+                name: NAMES[source].into(),
+                duration_ms: started.elapsed().as_millis() as u64,
+                count: apps.len(),
+                updated_at: crate::diagnostics::now(),
+            };
+            replacements.push((source, apps, metric));
         }
     }
+    let cfg = crate::config::get();
+    let overrides: std::collections::BTreeMap<_, _> = cfg.launch_overrides.iter().collect();
+    let personal_fingerprint =
+        serde_json::to_string(&(&cfg.manual_apps, overrides)).unwrap_or_default();
     let mut state = state()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    for (source, apps) in replacements {
+    for (source, apps, metric) in replacements {
         state.sources[source] = apps;
+        if let Some(existing) = state
+            .report
+            .sources
+            .iter_mut()
+            .find(|existing| existing.name == metric.name)
+        {
+            *existing = metric;
+        } else {
+            state.report.sources.push(metric);
+        }
     }
     if full {
         state.full_at = Some(Instant::now());
     }
-    let apps = merged(&state.sources);
-    if dirty.iter().any(|changed| *changed) {
+    let mut apps: Vec<_> = merged(&state.sources)
+        .into_iter()
+        .map(|app| crate::personal::effective(app, &cfg))
+        .collect();
+    apps.extend(crate::personal::entries(&cfg));
+    if dirty.iter().any(|changed| *changed) || state.personal_fingerprint != personal_fingerprint {
         state.report.revision += 1;
     }
+    state.personal_fingerprint = personal_fingerprint;
     state.report.full = full;
     state.report.rescanned = dirty
         .iter()

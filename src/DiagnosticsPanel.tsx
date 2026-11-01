@@ -30,6 +30,11 @@ export function DiagnosticsPanel({ apps, config, snapshot, initialId, onClose, o
       <div className="diagnostics-summary">已发现 {apps.length} 个应用 · {report?.full ? "全量扫描" : "增量检查"} {report?.duration_ms ?? 0}ms
         <br/>监听 {report?.watched_directories ?? 0} 个目录、{report?.watched_registry_keys ?? 0} 个注册表位置
         {report?.rescanned.length ? ` · 本轮更新：${report.rescanned.join("、")}` : " · 本轮复用扫描缓存"}</div>
+      <details className="performance-details"><summary>扫描来源与图标性能</summary><div>
+        <table><thead><tr><th>扫描来源</th><th>发现数</th><th>最近耗时</th><th>更新时间</th></tr></thead><tbody>{report?.sources?.map(source => <tr key={source.name}><td>{source.name}</td><td>{source.count}</td><td>{source.duration_ms}ms</td><td>{new Date(source.updated_at * 1000).toLocaleTimeString()}</td></tr>)}</tbody></table>
+        {snapshot?.icons && <p>图标请求 {snapshot.icons.requests} · 已完成 {snapshot.icons.completed} · 缓存命中 {snapshot.icons.cache_hits} · 超时 {snapshot.icons.timeouts}<br/>平均排队 {snapshot.icons.average_queue_ms.toFixed(1)}ms · 最长排队 {snapshot.icons.max_queue_ms.toFixed(1)}ms · 平均提取 {snapshot.icons.average_extraction_ms.toFixed(1)}ms</p>}
+        <small>扫描数为各来源去重前数据；耗时保留该来源最近一次扫描结果。图标统计限本次运行，不上传。</small>
+      </div></details>
       <input className="diagnostics-search" aria-label="搜索诊断应用" placeholder="搜索应用名称、路径或来源" value={query} onChange={(event) => setQuery(event.target.value)}/>
       <div className="diagnostics-body">
         <div className="diagnostics-list">{matches.map((entry) => <button key={entry.id} className={entry.id === app?.id ? "active" : ""}
