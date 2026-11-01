@@ -1,0 +1,29 @@
+.launchpad { --tile-min: 100px; --tile-height: 128px; --tile-gap: 12px; --tile-padding: 19px; --entry-icon-size: 54px; --entry-name-size: 12px; }
+.launchpad.density-compact { --tile-min: 84px; --tile-height: 106px; --tile-gap: 8px; --tile-padding: 14px; --entry-icon-size: 44px; --entry-name-size: 11px; }
+.launchpad.density-comfortable { --tile-min: 128px; --tile-height: 154px; --tile-gap: 16px; --tile-padding: 22px; --entry-icon-size: 64px; --entry-name-size: 13px; }
+.app-grid { grid-template-columns: repeat(auto-fill,minmax(var(--tile-min),1fr)); gap: var(--tile-gap); }
+.app-tile { min-height: var(--tile-height); gap: var(--tile-gap); padding-top: var(--tile-padding); }
+.app-icon { width: var(--entry-icon-size); height: var(--entry-icon-size); }
+.app-name { font-size: var(--entry-name-size); }
+.density-choices .btn { flex: 1; }
+.density-choices [aria-pressed="true"] { border-color: #a7e9dc80; color: #d8fff1; background-color: #8fd9da26; }
+.fixed-app { position: relative; }
+.fixed-key-hint { position: absolute; right: -1px; bottom: -1px; display: grid; place-items: center; width: 13px; height: 13px; border: 1px solid #c6e8ee50; border-radius: 5px; font-size: 9px; color: #e6fff9; background: #26354df5; opacity: 0; pointer-events: none; }
+.show-key-hints .fixed-key-hint { opacity: 1; }
+.app-health-badge { position: absolute; top: 8px; right: 8px; z-index: 2; display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid #f7ce8a50; border-radius: 50%; background: #35313df0; color: #f8d59b; }
+.app-health-badge .ui-icon { width: 14px; height: 14px; }
+.app-health-badge.health-missing { color: #ffc0bd; border-color: #ffa4a45c; background: #422a3bf0; }
+.fixed-health-dot { position: absolute; top: 2px; right: 2px; width: 6px; height: 6px; border-radius: 50%; background: #f5ce82; box-shadow: 0 0 0 2px #1d273a; pointer-events: none; }
+.fixed-health-dot.health-missing { background: #f5a4a4; }
+.health-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 18px 0; }
+.health-list { display: flex; flex-direction: column; gap: 10px; margin: 18px 0; }
+.health-row { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid #d7dff51a; border-radius: 16px; background: #ffffff05; }
+.health-entry-icon { width: 32px; height: 32px; flex-shrink: 0; }
+.health-entry-icon img { width: 100%; height: 100%; object-fit: contain; }
+.health-entry-copy { flex: 1; min-width: 0; }
+.health-entry-copy p { color: #e6cfa6; font-size: 12px; line-height: 1.5; margin-top: 4px; }
+.health-missing .health-entry-copy p { color: #f4b6b4; }
+.health-unchecked .health-entry-copy p { color: var(--mv-text-muted); }
+.health-entry-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--mv-text-muted); margin-top: 4px; font-size: 10px; }
+.resize-grip { position: absolute; z-index: 3; right: 3px; bottom: 3px; width: 4px; height: 4px; border-right: 1px solid #b7d7e869; border-bottom: 1px solid #b7d7e869; pointer-events: none; }
+@media (forced-colors: active) { .app-health-badge, .health-row { color: CanvasText; background: Canvas; border-color: CanvasText; } .fixed-health-dot { background: Mark; } }

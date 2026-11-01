@@ -21,10 +21,21 @@ pub enum Hotkey {
 /// 窗口外观配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Appearance {
+    #[serde(default)]
+    pub density: Density,
     /// 背景不透明度 0.0~1.0
     pub opacity: f64,
     /// 圆角大小（px）
     pub corner_radius: f64,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Density {
+    Compact,
+    #[default]
+    Standard,
+    Comfortable,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -36,6 +47,10 @@ pub struct Usage {
 /// 完整配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
+    #[serde(default)]
+    pub window_size: crate::position::WindowSize,
+    #[serde(default)]
+    pub entry_records: std::collections::HashMap<String, crate::health::EntryRecord>,
     pub hotkey: Hotkey,
     pub autostart: bool,
     pub appearance: Appearance,
@@ -71,6 +86,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
+            window_size: Default::default(),
+            entry_records: Default::default(),
             hotkey: Hotkey::Combo {
                 modifiers: vec!["alt".to_string(), "shift".to_string()],
                 key: "space".to_string(),
@@ -79,6 +96,7 @@ impl Default for Config {
             appearance: Appearance {
                 opacity: 0.8,
                 corner_radius: 24.0,
+                density: Density::Standard,
             },
             show_all: false,
             extra_dirs: Vec::new(),
@@ -237,10 +255,14 @@ pub fn set_extra_dirs(dirs: Vec<String>) -> Result<(), String> {
 /// 手动设置某个应用的分类（覆盖自动分类）
 #[tauri::command]
 pub fn set_app_category(app_id: String, category: String) -> Result<(), String> {
+    let entry = crate::catalog::find(&app_id);
     let cfg = get();
     validate_category(&category, &cfg.custom_categories)?;
     // 空值明确表示使用自动分类，并覆盖旧版按名称保存的映射。
     update(|cfg| {
+        if let Some(entry) = &entry {
+            crate::health::retain(cfg, entry);
+        }
         cfg.app_categories.insert(app_id, category);
     })
 }
@@ -292,7 +314,13 @@ pub fn remove_custom_category(name: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn set_app_pinned(app_id: String, pinned: bool) -> Result<Config, String> {
+    let entry = crate::catalog::find(&app_id);
     update(|cfg| {
+        if pinned {
+            if let Some(entry) = &entry {
+                crate::health::retain(cfg, entry);
+            }
+        }
         cfg.pinned_apps.retain(|id| id != &app_id);
         if pinned {
             cfg.pinned_apps.push(app_id);
@@ -303,7 +331,11 @@ pub fn set_app_pinned(app_id: String, pinned: bool) -> Result<Config, String> {
 
 #[tauri::command]
 pub fn place_pinned_app(app_id: String, before_id: Option<String>) -> Result<Config, String> {
+    let entry = crate::catalog::find(&app_id);
     update(|cfg| {
+        if let Some(entry) = &entry {
+            crate::health::retain(cfg, entry);
+        }
         place_pin(&mut cfg.pinned_apps, app_id, before_id.as_deref());
         cfg.clone()
     })
@@ -375,13 +407,19 @@ mod tests {
             "pinned_apps",
             "hidden_apps",
             "window_position",
+            "window_size",
+            "entry_records",
             "manual_apps",
             "aliases",
             "launch_overrides",
         ] {
             old.as_object_mut().unwrap().remove(field);
         }
+        old["appearance"].as_object_mut().unwrap().remove("density");
         let cfg: Config = serde_json::from_value(old).unwrap();
+        assert_eq!(cfg.window_size, crate::position::WindowSize::default());
+        assert_eq!(cfg.appearance.density, Density::Standard);
+        assert!(cfg.entry_records.is_empty());
         assert!(cfg.pinned_apps.is_empty() && cfg.hidden_apps.is_empty() && cfg.usage.is_empty());
         assert!(cfg.window_position.is_none());
         assert!(

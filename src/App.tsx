@@ -7,6 +7,8 @@ import { DiagnosticsPanel } from "./DiagnosticsPanel";
 import { AppEditor, type EditorTarget } from "./AppEditor";
 import { AppMenu } from "./AppMenu";
 import { EntryIcon } from "./EntryIcon";
+import { HealthPanel } from "./HealthPanel";
+import { dockShortcutIndex } from "./dockShortcuts";
 import { UiIcon, CategoryIcon } from "./UiIcon";
 import { Dialog } from "./Dialog";
 import { useOverlayFocus } from "./overlayFocus";
@@ -15,9 +17,10 @@ import { FixedBar } from "./FixedBar";
 import { fixedApps } from "./dock";
 import { useAppDrag } from "./useAppDrag";
 import { ManagementTools, ImportPreview } from "./ManagementTools";
-import type { AppEntry, Config, HotkeyConfig, Usage, ScanResult, Diagnostics, ManualApp, AutostartStatus, BackupPreview } from "./types";
+import type { AppEntry, Config, HotkeyConfig, Usage, ScanResult, Diagnostics, ManualApp, AutostartStatus, BackupPreview, EntryHealth } from "./types";
 import { IconLoader, iconKey, type IconTarget } from "./iconLoader";
 import "./App.css";
+import "./layout.css";
 
 const AUTO_SCAN_INTERVAL = 5 * 60 * 1000;
 const WAKE_SCAN_INTERVAL = 60 * 1000;
@@ -38,6 +41,13 @@ function App() {
   const [iconRevision, setIconRevision] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [healthOpen, setHealthOpen] = useState(false);
+  const [healthChecks, setHealthChecks] = useState<EntryHealth[]>([]);
+  const [healthBusy, setHealthBusy] = useState(false);
+  const [healthError, setHealthError] = useState("");
+  const [altPressed, setAltPressed] = useState(false);
+  const launchPending = useRef(false);
+  const healthById = useMemo(() => new Map(healthChecks.filter(item=>item.state!=="unchecked").map(item=>[item.id,item])),[healthChecks]);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [diagnosticId, setDiagnosticId] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<Diagnostics | null>(null);
@@ -61,7 +71,7 @@ function App() {
   const rootRef = useRef<HTMLDivElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const overlayKey = menu ? `menu:${menu.app.id}` : preview ? "import" : editor ? "editor" : diagnosticsOpen ? "diagnostics" : settingsOpen ? "settings" : null;
+  const overlayKey = menu ? `menu:${menu.app.id}` : preview ? "import" : editor ? "editor" : healthOpen ? "health" : diagnosticsOpen ? "diagnostics" : settingsOpen ? "settings" : null;
   useOverlayFocus(rootRef, overlayKey, openerRef, inputRef);
   const appearanceWriter = useRef<LatestWriter<Config["appearance"]> | null>(null);
   if (!appearanceWriter.current) appearanceWriter.current = new LatestWriter(
@@ -113,7 +123,15 @@ function App() {
 
   useEffect(() => () => iconLoader.current?.reset(), []);
 
-  useEffect(() => { void invoke("set_overlay_open", { open: settingsOpen || diagnosticsOpen || !!editor || !!menu || !!preview || dragging }); }, [settingsOpen, diagnosticsOpen, editor, menu, preview, dragging]);
+  useEffect(() => { void invoke("set_overlay_open", { open: !!overlayKey || dragging }); }, [overlayKey, dragging]);
+  useEffect(() => {
+    const down=(event: KeyboardEvent)=>{ if(event.key==="Alt"&&!event.repeat&&!overlayKey)setAltPressed(true); };
+    const up=(event: KeyboardEvent)=>{ if(event.key==="Alt")setAltPressed(false); };
+    const clear=()=>setAltPressed(false);
+    window.addEventListener("keydown",down);window.addEventListener("keyup",up);window.addEventListener("blur",clear);
+    if(overlayKey)clear();
+    return()=>{window.removeEventListener("keydown",down);window.removeEventListener("keyup",up);window.removeEventListener("blur",clear);};
+  },[overlayKey]);
   useEffect(() => () => { void invoke("set_overlay_open", { open: false }); }, []);
   useEffect(() => {
     let disposed = false; let stop: (() => void) | undefined;
@@ -132,6 +150,14 @@ function App() {
     setEditor({ manual: { kind: "app", id: `manual-${crypto.randomUUID()}`, name: "", path: "", arguments: "", working_dir: null, shortcut_path: null } });
   };
   const personalSaved = (next: Config) => { setConfig(next); setEditor(null); setPreview(null); void scan(false, true); };
+  const recheckHealth = async () => {
+    setHealthBusy(true); setHealthError("");
+    try { setHealthChecks(await invoke<EntryHealth[]>("check_entry_health")); }
+    catch(error) { setHealthError(String(error)); }
+    finally { setHealthBusy(false); }
+  };
+  const openHealth = () => { setSettingsOpen(false);setDiagnosticsOpen(false);setHealthOpen(true);void recheckHealth(); };
+  const repairEntry = (app: AppEntry) => { setHealthOpen(false);setMenu(null);setEditor({repair:app}); };
 
   // 共用一个扫描任务；目录变更发生在扫描中时，再补扫一次。
   const scan = useCallback((rescan = false, changed = false): Promise<void> => {
@@ -148,6 +174,7 @@ function App() {
           scanPending.current = false;
           try {
             const result = await invoke<ScanResult>("scan_apps", { force });
+            setHealthChecks(result.health ?? []);
             if (catalogRevision.current !== result.report.revision) {
               catalogRevision.current = result.report.revision;
               iconLoader.current?.reset();
@@ -249,7 +276,7 @@ function App() {
     };
     window.addEventListener("keydown", onGlobalKeyDown);
     return () => window.removeEventListener("keydown", onGlobalKeyDown);
-  }, [settingsOpen, diagnosticsOpen, capturing, editor, preview, menu]);
+  }, [settingsOpen, diagnosticsOpen, healthOpen, capturing, editor, preview, menu]);
 
   // 应用外观配置到 CSS 变量
   useEffect(() => {
@@ -289,6 +316,8 @@ function App() {
 
   // 启动应用
   const launch = async (app: AppEntry, admin: boolean = false) => {
+    if(launchPending.current)return;
+    launchPending.current=true;
     try {
       const result = await invoke<{ usage: Usage | null }>("launch_app", { appId: app.id, admin });
       if (result.usage) setConfig((current) => current ? { ...current, usage: { ...current.usage, [app.id]: result.usage! } } : current);
@@ -297,6 +326,8 @@ function App() {
     } catch (e) {
       console.error("启动失败", e);
       alert(`启动失败: ${e}`);
+    } finally {
+      launchPending.current=false;
     }
   };
 
@@ -371,6 +402,7 @@ function App() {
     if (editor) { setEditor(null); return; }
     if (menu) { setMenu(null); return; }
     if (diagnosticsOpen) { setDiagnosticsOpen(false); return; }
+    if (healthOpen) { setHealthOpen(false); return; }
     if (settingsOpen) {
       setSettingsOpen(false);
       setCapturing(false);
@@ -401,7 +433,7 @@ function App() {
     }
 
     // 设置面板打开时，不处理网格导航
-    if (settingsOpen || diagnosticsOpen || editor || preview || menu) return;
+    if (settingsOpen || diagnosticsOpen || healthOpen || editor || preview || menu || dragging) return;
 
     // 搜索框以外的输入控件保留自己的键盘行为。
     const target = e.target;
@@ -502,6 +534,19 @@ function App() {
     (activeCategory === "全部" || app.category === activeCategory)
   ), query, config ?? {}), [categorizedApps, activeCategory, query, config]);
   const dockApps = useMemo(() => fixedApps(categorizedApps, config ?? {}), [categorizedApps, config]);
+  useEffect(() => {
+    const onDockShortcut=(event: KeyboardEvent)=>{
+      if(overlayKey || dragging || capturing || event.defaultPrevented)return;
+      const index=dockShortcutIndex(event);
+      if(index===null)return;
+      const target=event.target;
+      if(target instanceof HTMLElement && target!==inputRef.current && (target.isContentEditable||target.closest("input,textarea,select")))return;
+      event.preventDefault();setAltPressed(false);
+      const app=dockApps[index];if(app)void launch(app);
+    };
+    window.addEventListener("keydown",onDockShortcut);
+    return()=>window.removeEventListener("keydown",onDockShortcut);
+  },[dockApps,overlayKey,dragging,capturing]);
   const selectedIndex = Math.max(0, filtered.findIndex((app) => app.id === selectedId));
   const setSelectedIndex = (value: number | ((index: number) => number)) => {
     const index = typeof value === "function" ? value(selectedIndex) : value;
@@ -589,7 +634,7 @@ function App() {
   }, [selectedIndex]);
 
   return (
-    <div className={`launchpad${dragging ? ' app-dragging' : ''}`} ref={rootRef} onKeyDown={handleKeyDown} onClickCapture={event => {
+    <div className={`launchpad density-${config?.appearance.density ?? "standard"}${dragging ? ' app-dragging' : ''}`} ref={rootRef} onKeyDown={handleKeyDown} onClickCapture={event => {
       if (appDrag.consumeClick()) { event.preventDefault(); event.stopPropagation(); }
     }} onFocusCapture={event => {
       if (!overlayKey && event.target instanceof HTMLElement) openerRef.current = event.target;
@@ -629,7 +674,7 @@ function App() {
         </button>
       </div>
 
-      <FixedBar apps={dockApps} listRef={dockRef} drag={appDrag.drag} onPlace={placePinned}
+      <FixedBar apps={dockApps} listRef={dockRef} drag={appDrag.drag} onPlace={placePinned} health={healthById} showHints={altPressed}
         onLaunch={app => void launch(app)} onMenu={(app, x, y) => setMenu({ app, x, y })} onDrag={appDrag.start}/>
 
       <div className="main-area">
@@ -738,6 +783,7 @@ function App() {
                 aria-description={`${app.path}${app.arguments ? `，${app.arguments}` : ""}。单击启动，右键操作菜单，当前分类：${app.category}`}
               >
                 {config?.pinned_apps?.includes(app.id) && <span className="app-pin-corner" aria-hidden="true"><UiIcon name="star"/></span>}
+                {healthById.has(app.id) && <button className={`app-health-badge health-${healthById.get(app.id)!.state}`} title={healthById.get(app.id)!.message} aria-label={`修复 ${app.name}：${healthById.get(app.id)!.message}`} onPointerDown={event=>event.stopPropagation()} onKeyDown={event=>event.stopPropagation()} onClick={event=>{event.stopPropagation();repairEntry(app);}}><UiIcon name="info"/></button>}
                 <div className="app-icon">
                   <EntryIcon app={app}/>
                 </div>
@@ -751,6 +797,7 @@ function App() {
       <div className="footer-hint">
         <span className="footer-status">{filtered.length} 个应用<span className="footer-shortcuts"> · ↑↓←→ 导航 · Enter 启动 · Esc 收起</span></span>
         <button className="footer-link" onClick={() => openDiagnostics(null)}>应用诊断</button>
+        <button className="footer-link" onClick={openHealth}>入口检查{healthById.size ? ` · ${healthById.size}` : ""}</button>
         <label className="show-all-toggle" title="勾选后显示被自动过滤的卸载程序、命令行工具等">
           <input
             type="checkbox"
@@ -883,6 +930,8 @@ function App() {
             {/* 窗口外观 */}
             <div className="settings-section">
               <div className="settings-label">窗口外观</div>
+              <div className="settings-row density-choices" role="group" aria-label="卡片显示密度">{([['compact','紧凑'],['standard','标准'],['comfortable','宽松']] as const).map(([density,label])=><button key={density} className="btn" aria-pressed={(config.appearance.density??'standard')===density} onClick={()=>{changeAppearance({density});flushAppearance();}}>{label}</button>)}</div>
+              <div className="settings-row"><span className="settings-hint">拖动窗口边缘调整大小，尺寸自动保存。</span><button className="btn" onClick={()=>void invoke("reset_window_size").catch(error=>setNotice(String(error)))}>恢复默认尺寸</button></div>
 
               <div className="settings-row">
                 <span className="settings-hint">玻璃深度</span>
@@ -1012,13 +1061,16 @@ function App() {
       {diagnosticsOpen && <DiagnosticsPanel key={diagnosticId ?? "all"} apps={categorizedApps} config={config}
         snapshot={snapshot} initialId={diagnosticId} onClose={() => setDiagnosticsOpen(false)}
         onRefresh={() => void refreshDiagnostics()} onPin={(app) => void togglePinned(app)} onHide={(app) => void toggleHidden(app)}/>}
-      {editor && config && <AppEditor key={"app" in editor ? editor.app.id : editor.manual.id} target={editor} config={config} onClose={() => setEditor(null)} onSaved={personalSaved}/>}
+      {healthOpen && <HealthPanel apps={apps} checks={healthChecks} busy={healthBusy} error={healthError} onClose={()=>setHealthOpen(false)} onCheck={()=>void recheckHealth()} onRepair={repairEntry}/>}
+      {editor && config && <AppEditor key={"app" in editor ? editor.app.id : "repair" in editor ? `repair:${editor.repair.id}` : editor.manual.id} target={editor} config={config} onClose={() => setEditor(null)} onSaved={personalSaved}/>}
       {preview && <ImportPreview preview={preview} onClose={() => setPreview(null)} onImported={personalSaved}/>}
       {menu && <AppMenu app={menu.app} config={config} x={menu.x} y={menu.y} onClose={() => setMenu(null)}
         onEdit={() => { setEditor({ app: menu.app }); setMenu(null); }} onDetails={() => { openDiagnostics(menu.app.id); setMenu(null); }}
+        onRepair={()=>repairEntry(menu.app)}
         onLaunch={admin => { void launch(menu.app, admin); setMenu(null); }} onPin={() => { void togglePinned(menu.app); setMenu(null); }}
         onHide={() => { void toggleHidden(menu.app); setMenu(null); }} onMessage={setNotice}/>}
-      {notice && !editor && !preview && !menu && <div className="toast" role="status"><span>{notice}</span><button aria-label="关闭提示" onClick={() => setNotice("")}><UiIcon name="close"/></button></div>}
+      {notice && !editor && !preview && !menu && !healthOpen && <div className="toast" role="status"><span>{notice}</span><button aria-label="关闭提示" onClick={() => setNotice("")}><UiIcon name="close"/></button></div>}
+      <span className="resize-grip" aria-hidden="true"/>
     </div>
   );
 }

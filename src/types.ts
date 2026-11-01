@@ -22,9 +22,10 @@ export interface AutostartStatus { enabled: boolean; legacy: boolean; command: s
 export interface BackupPreview { json: string; manual_apps: number; aliases: number; categories: number; pinned: number; hidden: number; directories: number; missing: string[] }
 export interface UpdateInfo { current: string; version: string; notes: string; published_at: string; available: boolean; can_install: boolean; message: string }
 export interface Config {
+  window_size?: { width: number; height: number };
   hotkey: HotkeyConfig;
   autostart: boolean;
-  appearance: { opacity: number; corner_radius: number };
+  appearance: { opacity: number; corner_radius: number; density?: "compact" | "standard" | "comfortable" };
   show_all?: boolean;
   extra_dirs?: string[];
   custom_categories?: string[];
@@ -54,6 +55,7 @@ export interface ScanReport {
   watched_registry_keys: number;
   sources: { name: string; duration_ms: number; count: number; updated_at: number }[];
 }
-export interface ScanResult { apps: AppEntry[]; report: ScanReport }
+export interface EntryHealth { id: string; state: "missing" | "warning" | "unchecked"; message: string }
+export interface ScanResult { apps: AppEntry[]; report: ScanReport; health?: EntryHealth[] }
 export interface DiagnosticEvent { time: number; stage: string; path: string; app_id?: string | null; message: string }
 export interface Diagnostics { version: string; executable: string; report: ScanReport; events: DiagnosticEvent[]; icons: { requests: number; completed: number; cache_hits: number; timeouts: number; average_queue_ms: number; max_queue_ms: number; average_extraction_ms: number } }

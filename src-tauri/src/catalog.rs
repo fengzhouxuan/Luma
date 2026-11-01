@@ -34,6 +34,7 @@ pub struct ScanReport {
 
 #[derive(Clone, Serialize)]
 pub struct ScanResult {
+    pub health: Vec<crate::health::EntryHealth>,
     pub apps: Vec<AppEntry>,
     pub report: ScanReport,
 }
@@ -121,6 +122,9 @@ fn merged(sources: &[Vec<AppEntry>; 3]) -> Vec<AppEntry> {
 
 pub fn find(id: &str) -> Option<AppEntry> {
     let cfg = crate::config::get();
+    if let Some(record) = cfg.entry_records.get(id).filter(|item| item.repaired) {
+        return Some(crate::personal::effective(record.entry.clone(), &cfg));
+    }
     crate::personal::entries(&cfg)
         .into_iter()
         .find(|app| app.id == id)
@@ -135,6 +139,31 @@ pub fn find(id: &str) -> Option<AppEntry> {
                 .cloned()
                 .map(|app| crate::personal::effective(app, &cfg))
         })
+        .or_else(|| {
+            cfg.entry_records
+                .get(id)
+                .map(|record| crate::personal::effective(record.entry.clone(), &cfg))
+        })
+        .or_else(|| {
+            crate::health::decorate(Vec::new(), &cfg)
+                .into_iter()
+                .find(|app| app.id == id)
+        })
+}
+
+pub fn all() -> Vec<AppEntry> {
+    let cfg = crate::config::get();
+    let mut apps = merged(
+        &state()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .sources,
+    )
+    .into_iter()
+    .map(|app| crate::personal::effective(app, &cfg))
+    .collect::<Vec<_>>();
+    apps.extend(crate::personal::entries(&cfg));
+    crate::health::decorate(apps, &cfg)
 }
 
 pub fn preferences_changed() {
@@ -185,8 +214,9 @@ pub fn scan(force: bool) -> ScanResult {
     }
     let cfg = crate::config::get();
     let overrides: std::collections::BTreeMap<_, _> = cfg.launch_overrides.iter().collect();
+    let records: std::collections::BTreeMap<_, _> = cfg.entry_records.iter().collect();
     let personal_fingerprint =
-        serde_json::to_string(&(&cfg.manual_apps, overrides)).unwrap_or_default();
+        serde_json::to_string(&(&cfg.manual_apps, overrides, records)).unwrap_or_default();
     let mut state = state()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -225,9 +255,21 @@ pub fn scan(force: bool) -> ScanResult {
     state.report.duration_ms = started.elapsed().as_millis() as u64;
     state.report.time = crate::diagnostics::now();
     state.report.app_count = apps.len();
+    let mut report = state.report.clone();
+    drop(state);
+    crate::health::remember(&apps);
+    let apps = crate::health::decorate(apps, &crate::config::get());
+    report.app_count = apps.len();
+    let health = crate::health::inspect_all(&apps);
+    self::state()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .report
+        .app_count = apps.len();
     ScanResult {
         apps,
-        report: state.report.clone(),
+        health,
+        report,
     }
 }
 

@@ -4,15 +4,16 @@ import { adjacentBefore } from "./dock";
 import { UiIcon } from "./UiIcon";
 import { EntryIcon } from "./EntryIcon";
 import type { AppDrag } from "./useAppDrag";
-import type { AppEntry } from "./types";
+import type { AppEntry, EntryHealth } from "./types";
 
 interface Props {
   apps: AppEntry[]; listRef: RefObject<HTMLDivElement | null>; drag: AppDrag | null;
+  health: Map<string,EntryHealth>; showHints: boolean;
   onLaunch: (app: AppEntry) => void; onMenu: (app: AppEntry, x: number, y: number) => void;
   onPlace: (app: AppEntry, beforeId: string | null) => void;
   onDrag: (event: PointerEvent<HTMLElement>, app: AppEntry) => void;
 }
-export function FixedBar({ apps, listRef, drag, onLaunch, onMenu, onPlace, onDrag }: Props) {
+export function FixedBar({ apps, listRef, drag, onLaunch, onMenu, onPlace, onDrag, health, showHints }: Props) {
   useEffect(() => {
     const list = listRef.current;
     if (!list) return;
@@ -24,14 +25,14 @@ export function FixedBar({ apps, listRef, drag, onLaunch, onMenu, onPlace, onDra
     list.addEventListener('wheel', wheel, { passive: false });
     return () => list.removeEventListener('wheel', wheel);
   }, [listRef]);
-  return <section className={`fixed-bar${drag ? ' dragging' : ''}${drag?.overDock ? ' drop-active' : ''}`} aria-label="固定应用栏">
+  return <section className={`fixed-bar${showHints ? ' show-key-hints' : ''}${drag ? ' dragging' : ''}${drag?.overDock ? ' drop-active' : ''}`} aria-label="固定应用栏">
     <span className="fixed-label"><UiIcon name="star"/><span>固定</span></span>
     <div ref={listRef} className="fixed-list">
       {apps.length === 0 && <span className="fixed-empty">拖入应用，或右键应用选择「固定到应用栏」</span>}
-      {apps.map(app => <div className="fixed-slot" key={app.id}>
+      {apps.map((app,index) => <div className="fixed-slot" key={app.id}>
         {drag?.overDock && drag.beforeId === app.id && <span className="fixed-insertion"/>}
         <button className={`fixed-app${drag?.app.id === app.id ? ' drag-source' : ''}`} data-dock-app={app.id} data-icon-key={iconKey(app)}
-          title={app.name} aria-label={`${app.name}，固定应用`} aria-description="单击启动，右键管理，Alt 加左右方向键调整顺序"
+          title={`${app.name}${index<9 ? ` · Alt+${index+1}` : ''}${health.has(app.id) ? ` · ${health.get(app.id)!.message}` : ''}`} aria-keyshortcuts={index<9 ? `Alt+${index+1}` : undefined} aria-label={`${app.name}，固定应用`} aria-description="单击启动，右键管理，Alt 加数字键启动，Alt 加左右方向键调整顺序"
           onClick={() => onLaunch(app)} onPointerDown={event => onDrag(event, app)}
           onContextMenu={event => { event.preventDefault(); onMenu(app, event.clientX, event.clientY); }}
           onKeyDown={event => {
@@ -52,6 +53,8 @@ export function FixedBar({ apps, listRef, drag, onLaunch, onMenu, onPlace, onDra
             }
           }}>
           <EntryIcon app={app}/>
+          {index<9 && <span className="fixed-key-hint" aria-hidden="true">{index+1}</span>}
+          {health.has(app.id) && <span className={`fixed-health-dot health-${health.get(app.id)!.state}`} aria-hidden="true"/>}
         </button>
       </div>)}
       {drag?.overDock && !drag.beforeId && <span className="fixed-insertion at-end"/>}

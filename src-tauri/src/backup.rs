@@ -26,6 +26,7 @@ struct Preferences {
     manual_apps: Vec<ManualApp>,
     aliases: HashMap<String, Vec<String>>,
     launch_overrides: HashMap<String, LaunchOverride>,
+    entry_records: HashMap<String, crate::health::EntryRecord>,
 }
 #[derive(Serialize, Deserialize)]
 struct Backup {
@@ -48,7 +49,7 @@ pub struct Preview {
 fn from_config(cfg: &Config) -> Backup {
     Backup {
         format: "luma-config".into(),
-        version: 2,
+        version: 3,
         preferences: Preferences {
             appearance: Some(cfg.appearance.clone()),
             show_all: cfg.show_all,
@@ -61,6 +62,7 @@ fn from_config(cfg: &Config) -> Backup {
             manual_apps: cfg.manual_apps.clone(),
             aliases: cfg.aliases.clone(),
             launch_overrides: cfg.launch_overrides.clone(),
+            entry_records: cfg.entry_records.clone(),
         },
     }
 }
@@ -70,11 +72,12 @@ fn parse(json: &str) -> Result<Backup, String> {
         return Err("备份文件不能超过 2MB".into());
     }
     let mut data: Backup = serde_json::from_str(json).map_err(|e| format!("备份格式无效：{e}"))?;
-    if data.format != "luma-config" || !matches!(data.version, 1 | 2) {
+    if data.format != "luma-config" || !matches!(data.version, 1 | 2 | 3) {
         return Err("不支持的备份类型或版本".into());
     }
     let p = &mut data.preferences;
     if p.manual_apps.len() > 5000
+        || p.entry_records.len() > 5000
         || p.aliases.len() > 20000
         || p.launch_overrides.len() > 20000
         || p.usage.len() > 20000
@@ -83,11 +86,17 @@ fn parse(json: &str) -> Result<Backup, String> {
         return Err("备份条目过多".into());
     }
     let mut ids = HashSet::new();
+    for (id, record) in &p.entry_records {
+        crate::health::validate_record(id, record)?;
+    }
     for item in &p.manual_apps {
         crate::personal::validate(item, false)?;
         if !ids.insert(&item.id) {
             return Err("备份包含重复的手动应用标识".into());
         }
+    }
+    if p.entry_records.keys().any(|id| ids.contains(id)) {
+        return Err("手动入口与保留入口标识重复".into());
     }
     for values in p.aliases.values_mut() {
         *values = crate::personal::validate_aliases(std::mem::take(values))?;
@@ -122,7 +131,7 @@ fn parse(json: &str) -> Result<Backup, String> {
         if !appearance.opacity.is_finite()
             || !(0.3..=0.95).contains(&appearance.opacity)
             || !appearance.corner_radius.is_finite()
-            || !(0.0..=24.0).contains(&appearance.corner_radius)
+            || !(0.0..=48.0).contains(&appearance.corner_radius)
         {
             return Err("外观配置超出允许范围".into());
         }
@@ -144,6 +153,7 @@ fn apply(cfg: &mut Config, p: Preferences) {
     cfg.manual_apps = p.manual_apps;
     cfg.aliases = p.aliases;
     cfg.launch_overrides = p.launch_overrides;
+    cfg.entry_records = p.entry_records;
     // 热键、自启和窗口位置属于本机环境，不从其他电脑的备份覆盖。
 }
 
@@ -203,6 +213,15 @@ pub async fn preview_config_import(app: tauri::AppHandle) -> Result<Option<Previ
             .filter(|item| personal::is_missing(item))
             .map(|item| item.path.clone())
             .chain(
+                p.entry_records
+                    .values()
+                    .filter(|record| {
+                        crate::health::inspect(&record.entry)
+                            .is_some_and(|check| check.state == "missing")
+                    })
+                    .map(|record| record.entry.path.clone()),
+            )
+            .chain(
                 p.extra_dirs
                     .iter()
                     .filter(|directory| !Path::new(directory).is_dir())
@@ -250,6 +269,42 @@ pub fn import_config_backup(json: String, app: tauri::AppHandle) -> Result<Confi
 mod tests {
     use super::*;
     #[test]
+    fn density_and_repaired_targets_round_trip_without_changing_local_window_size() {
+        let mut cfg = Config::default();
+        cfg.appearance.density = crate::config::Density::Compact;
+        cfg.appearance.corner_radius = 36.0;
+        let mut entry = crate::model::AppEntry::new(
+            "原名称".into(),
+            r"C:\New\app.exe".into(),
+            "修复入口",
+            String::new(),
+        );
+        entry.id = "original-id".into();
+        cfg.entry_records.insert(
+            entry.id.clone(),
+            crate::health::EntryRecord {
+                entry,
+                repaired: true,
+            },
+        );
+        cfg.pinned_apps.push("original-id".into());
+        let parsed = parse(&serde_json::to_string(&from_config(&cfg)).unwrap()).unwrap();
+        let mut restored = Config::default();
+        restored.window_size = crate::position::WindowSize {
+            width: 1100.0,
+            height: 760.0,
+        };
+        apply(&mut restored, parsed.preferences);
+        assert_eq!(restored.appearance.density, crate::config::Density::Compact);
+        assert_eq!(restored.appearance.corner_radius, 36.0);
+        assert_eq!(restored.window_size.width, 1100.0);
+        assert_eq!(
+            restored.entry_records["original-id"].entry.path,
+            r"C:\New\app.exe"
+        );
+        assert_eq!(restored.pinned_apps, vec!["original-id"]);
+    }
+    #[test]
     fn old_backup_imports_and_new_entry_kinds_round_trip() {
         let old = r#"{"format":"luma-config","version":1,"preferences":{"manual_apps":[{"id":"manual-old","name":"旧应用","path":"C:\\old.exe","arguments":"","working_dir":null}]}}"#;
         let mut cfg = Config::default();
@@ -266,7 +321,7 @@ mod tests {
         cfg.manual_apps.extend([web, folder]);
         cfg.pinned_apps = vec!["manual-folder".into(), "manual-web".into()];
         let data = from_config(&cfg);
-        assert_eq!(data.version, 2);
+        assert_eq!(data.version, 3);
         let restored = parse(&serde_json::to_string(&data).unwrap()).unwrap();
         assert_eq!(
             restored.preferences.manual_apps[1].kind,

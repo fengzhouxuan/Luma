@@ -6,6 +6,32 @@ use std::sync::{
 };
 use tauri::Manager;
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+pub struct WindowSize {
+    pub width: f64,
+    pub height: f64,
+}
+impl Default for WindowSize {
+    fn default() -> Self {
+        Self {
+            width: 900.0,
+            height: 640.0,
+        }
+    }
+}
+impl WindowSize {
+    pub fn valid(self) -> bool {
+        self.width.is_finite()
+            && self.height.is_finite()
+            && (640.0..=3200.0).contains(&self.width)
+            && (420.0..=2160.0).contains(&self.height)
+    }
+    fn logical(self) -> (f64, f64) {
+        let value = if self.valid() { self } else { Self::default() };
+        (value.width, value.height)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SavedPosition {
     pub monitor_id: String,
@@ -266,6 +292,25 @@ fn rect(window: &tauri::WebviewWindow) -> Result<Rect, String> {
 }
 
 fn apply(window: &tauri::WebviewWindow, result: &Plan) -> Result<(), String> {
+    if let Some(display) = inventory(window)?
+        .iter()
+        .find(|display| display.id == result.display_id)
+    {
+        let width = display.area.width as f64 / display.scale;
+        let height = display.area.height as f64 / display.scale;
+        window
+            .set_min_size(Some(tauri::LogicalSize::new(
+                640.0_f64.min(width),
+                420.0_f64.min(height),
+            )))
+            .map_err(|error| error.to_string())?;
+        window
+            .set_max_size(Some(tauri::LogicalSize::new(
+                3200.0_f64.min(width),
+                2160.0_f64.min(height),
+            )))
+            .map_err(|error| error.to_string())?;
+    }
     if rect(window)? == result.rect {
         return Ok(());
     }
@@ -318,8 +363,21 @@ fn reconcile(window: &tauri::WebviewWindow, wake: bool) -> Result<(), String> {
     let moved = native::take_user_move();
     let dirty = native::take_dirty();
     if moved && !changed {
-        if let Some(saved) = state.engine.user_moved(rect(window)?, &displays) {
-            crate::config::update(|config| config.window_position = Some(saved.clone()))?;
+        let current = rect(window)?;
+        if let Some(saved) = state.engine.user_moved(current, &displays) {
+            let size = WindowSize {
+                width: current.width as f64 / saved.scale_factor,
+                height: current.height as f64 / saved.scale_factor,
+            };
+            if size.valid() {
+                state.logical_size = size.logical();
+            }
+            crate::config::update(|config| {
+                config.window_position = Some(saved.clone());
+                if size.valid() {
+                    config.window_size = size;
+                }
+            })?;
             crate::diagnostics::record(
                 "窗口",
                 "位置记忆",
@@ -336,7 +394,7 @@ fn reconcile(window: &tauri::WebviewWindow, wake: bool) -> Result<(), String> {
     } = &mut *state;
     let result = if wake {
         engine.wake(displays, *logical_size)
-    } else if changed || dirty {
+    } else if changed || dirty || moved {
         engine.topology_changed(displays, rect(window)?, *logical_size)
     } else {
         None
@@ -353,6 +411,25 @@ pub fn before_show(window: &tauri::WebviewWindow) {
     }
 }
 
+#[tauri::command]
+pub fn reset_window_size(app: tauri::AppHandle) -> Result<(), String> {
+    crate::config::update(|cfg| cfg.window_size = WindowSize::default())?;
+    let window = app.get_webview_window("main").ok_or("主窗口不可用")?;
+    let target = window.clone();
+    window
+        .run_on_main_thread(move || {
+            if let Some(manager) = target.app_handle().try_state::<PositionManager>() {
+                manager
+                    .0
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .logical_size = WindowSize::default().logical();
+            }
+            before_show(&target);
+        })
+        .map_err(|error| error.to_string())
+}
+
 pub fn flush(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         if let Err(error) = reconcile(&window, false) {
@@ -365,13 +442,7 @@ pub fn setup(app: &tauri::App) -> Result<(), String> {
     let Some(window) = app.get_webview_window("main") else {
         return Ok(());
     };
-    let config = app
-        .config()
-        .app
-        .windows
-        .iter()
-        .find(|window| window.label == "main");
-    let logical_size = config.map_or((900.0, 640.0), |window| (window.width, window.height));
+    let logical_size = crate::config::get().window_size.logical();
     app.manage(PositionManager(Mutex::new(State {
         engine: Engine {
             preferred: crate::config::get().window_position,
@@ -441,6 +512,8 @@ mod native {
     static START_GENERATION: AtomicU64 = AtomicU64::new(0);
     static START_X: AtomicI32 = AtomicI32::new(0);
     static START_Y: AtomicI32 = AtomicI32::new(0);
+    static START_WIDTH: AtomicI32 = AtomicI32::new(0);
+    static START_HEIGHT: AtomicI32 = AtomicI32::new(0);
 
     pub fn identity(name: &str) -> (String, String) {
         let wide: Vec<_> = name.encode_utf16().chain(Some(0)).collect();
@@ -486,6 +559,8 @@ mod native {
                 }
                 START_X.store(rect.left, Ordering::Relaxed);
                 START_Y.store(rect.top, Ordering::Relaxed);
+                START_WIDTH.store(rect.right - rect.left, Ordering::Relaxed);
+                START_HEIGHT.store(rect.bottom - rect.top, Ordering::Relaxed);
                 START_GENERATION.store(GENERATION.load(Ordering::Acquire), Ordering::Release);
                 DRAGGING.store(true, Ordering::Release);
             }
@@ -494,7 +569,9 @@ mod native {
                 let valid = unsafe { GetWindowRect(hwnd, &mut rect) } != 0;
                 if valid
                     && (rect.left != START_X.load(Ordering::Relaxed)
-                        || rect.top != START_Y.load(Ordering::Relaxed))
+                        || rect.top != START_Y.load(Ordering::Relaxed)
+                        || rect.right - rect.left != START_WIDTH.load(Ordering::Relaxed)
+                        || rect.bottom - rect.top != START_HEIGHT.load(Ordering::Relaxed))
                     && GENERATION.load(Ordering::Acquire)
                         == START_GENERATION.load(Ordering::Acquire)
                 {
@@ -562,6 +639,46 @@ mod native {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn custom_sizes_restore_across_dpi_and_clamp_without_losing_the_preference() {
+        let size = WindowSize {
+            width: 1200.0,
+            height: 820.0,
+        };
+        assert!(size.valid());
+        for invalid in [
+            WindowSize {
+                width: f64::NAN,
+                height: 640.0,
+            },
+            WindowSize {
+                width: 500.0,
+                height: 400.0,
+            },
+            WindowSize {
+                width: 9000.0,
+                height: 9000.0,
+            },
+        ] {
+            assert_eq!(invalid.logical(), (900.0, 640.0));
+        }
+        let mut screens = displays();
+        screens[0].scale = 1.5;
+        let result = restore(Some(&saved()), &screens, size.logical()).unwrap();
+        assert_eq!((result.rect.width, result.rect.height), (1800, 1032));
+        assert!(screens[0].area.contains(result.rect));
+        screens[0].scale = 1.0;
+        let restored = restore(Some(&saved()), &screens, size.logical()).unwrap();
+        assert_eq!((restored.rect.width, restored.rect.height), (1200, 820));
+        let mut tiny = screens.clone();
+        tiny[0].area.width = 600;
+        tiny[0].area.height = 380;
+        assert!(
+            tiny[0]
+                .area
+                .contains(restore(Some(&saved()), &tiny, size.logical()).unwrap().rect)
+        );
+    }
     fn displays() -> Vec<Display> {
         vec![
             Display {

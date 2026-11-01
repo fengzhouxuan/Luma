@@ -11,7 +11,7 @@ pub enum EntryKind {
     Script,
 }
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AppEntry {
     pub kind: EntryKind,
     pub id: String,

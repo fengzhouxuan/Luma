@@ -2,8 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { useLayoutEffect, useRef } from "react";
 import { focusableElements } from "./overlayFocus";
 import type { AppEntry, Config } from "./types";
-interface Props { app: AppEntry; config: Config | null; x: number; y: number; onClose: () => void; onEdit: () => void; onDetails: () => void; onLaunch: (admin: boolean) => void; onPin: () => void; onHide: () => void; onMessage: (message: string) => void }
-export function AppMenu({ app, config, x, y, onClose, onEdit, onDetails, onLaunch, onPin, onHide, onMessage }: Props) {
+interface Props { app: AppEntry; config: Config | null; x: number; y: number; onClose: () => void; onEdit: () => void; onRepair: () => void; onDetails: () => void; onLaunch: (admin: boolean) => void; onPin: () => void; onHide: () => void; onMessage: (message: string) => void }
+export function AppMenu({ app, config, x, y, onClose, onEdit, onRepair, onDetails, onLaunch, onPin, onHide, onMessage }: Props) {
   const ref = useRef<HTMLElement>(null);
   useLayoutEffect(() => {
     const menu = ref.current;
@@ -28,6 +28,7 @@ export function AppMenu({ app, config, x, y, onClose, onEdit, onDetails, onLaunc
       <strong>{app.name}</strong><button role="menuitem" onClick={() => onLaunch(false)}>启动应用</button>
       <button role="menuitem" disabled={managed} onClick={() => onLaunch(true)}>以管理员身份启动</button>
       <button role="menuitem" onClick={onEdit}>别名与启动设置</button>
+      <button role="menuitem" onClick={onRepair}>重新选择入口目标</button>
       <button role="menuitem" disabled={app.kind === "web"} onClick={() => void action("reveal_app")}>打开所在目录</button>
       <button role="menuitem" onClick={() => void action("copy_app_path")}>{app.kind === "web" ? "复制链接" : "复制应用路径"}</button>
       <button role="menuitem" onClick={onPin}>{config?.pinned_apps?.includes(app.id) ? "从应用栏取消固定" : "固定到应用栏"}</button>

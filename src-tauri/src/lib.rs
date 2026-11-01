@@ -8,6 +8,7 @@ mod catalog;
 mod config;
 mod diagnostics;
 mod discovery;
+mod health;
 #[cfg(windows)]
 mod icon_resource;
 mod icons;
@@ -920,6 +921,9 @@ pub fn run() {
             personal::remove_manual_app,
             personal::copy_app_path,
             personal::reveal_app,
+            health::check_entry_health,
+            health::repair_entry,
+            position::reset_window_size,
             backup::export_config_backup,
             backup::preview_config_import,
             backup::import_config_backup,
