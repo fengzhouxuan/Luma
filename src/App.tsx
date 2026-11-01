@@ -930,8 +930,13 @@ function App() {
             {/* 窗口外观 */}
             <div className="settings-section">
               <div className="settings-label">窗口外观</div>
-              <div className="settings-row density-choices" role="group" aria-label="卡片显示密度">{([['compact','紧凑'],['standard','标准'],['comfortable','宽松']] as const).map(([density,label])=><button key={density} className="btn" aria-pressed={(config.appearance.density??'standard')===density} onClick={()=>{changeAppearance({density});flushAppearance();}}>{label}</button>)}</div>
-              <div className="settings-row"><span className="settings-hint">拖动窗口边缘调整大小，尺寸自动保存。</span><button className="btn" onClick={()=>void invoke("reset_window_size").catch(error=>setNotice(String(error)))}>恢复默认尺寸</button></div>
+              <div className="window-layout-controls">
+                <div className="density-choices" role="group" aria-label="卡片显示密度">{([['compact','紧凑'],['standard','标准'],['comfortable','宽松']] as const).map(([density,label])=><button key={density} className="btn" aria-pressed={(config.appearance.density??'standard')===density} onClick={()=>{changeAppearance({density});flushAppearance();}}>{label}</button>)}</div>
+                <div className="window-size-row">
+                  <span className="settings-hint">拖动窗口边缘调整大小，尺寸自动保存。</span>
+                  <button className="btn" onClick={()=>void invoke("reset_window_size").catch(error=>setNotice(String(error)))}>恢复默认尺寸</button>
+                </div>
+              </div>
 
               <div className="settings-row">
                 <span className="settings-hint">玻璃深度</span>

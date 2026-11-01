@@ -5,7 +5,11 @@
 .app-tile { min-height: var(--tile-height); gap: var(--tile-gap); padding-top: var(--tile-padding); }
 .app-icon { width: var(--entry-icon-size); height: var(--entry-icon-size); }
 .app-name { font-size: var(--entry-name-size); }
-.density-choices .btn { flex: 1; }
+.window-layout-controls { display: grid; gap: 12px; margin-bottom: 16px; }
+.density-choices { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+.window-size-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.window-size-row .settings-hint { flex: 1 1 220px; }
+.window-size-row .btn { flex: 0 0 auto; margin-left: auto; }
 .density-choices [aria-pressed="true"] { border-color: #a7e9dc80; color: #d8fff1; background-color: #8fd9da26; }
 .fixed-app { position: relative; }
 .fixed-key-hint { position: absolute; right: -1px; bottom: -1px; display: grid; place-items: center; width: 13px; height: 13px; border: 1px solid #c6e8ee50; border-radius: 5px; font-size: 9px; color: #e6fff9; background: #26354df5; opacity: 0; pointer-events: none; }

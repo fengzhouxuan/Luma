@@ -2,7 +2,7 @@
 
 适用于 Windows 的轻量应用启动器。按 **`Alt+Shift+Space`** 唤出，用名称、拼音或首字母搜索应用，再按回车启动。
 
-当前源码版本：**1.9.0**。基于 Tauri 2、React、TypeScript 和 Rust，提供 Liquid Glass 深色玻璃界面、系统托盘与键盘操作。
+当前源码版本：**1.9.1**。基于 Tauri 2、React、TypeScript 和 Rust，提供 Liquid Glass 深色玻璃界面、系统托盘与键盘操作。
 
 [下载安装包](https://github.com/fengzhouxuan/Luma/releases) · [更新日志](./CHANGELOG.md) · [反馈问题](https://github.com/fengzhouxuan/Luma/issues)
 
@@ -152,7 +152,7 @@ npm test
 cargo test --locked --lib --manifest-path src-tauri/Cargo.toml
 ```
 
-前端测试覆盖搜索排序、固定栏顺序、配置写入与图标队列；后端测试覆盖应用身份、来源缓存、真实快捷方式参数及工作目录、快捷方式丢失后的回退、目录与注册表通知、图标资源和缓存，以及快捷入口类型、网页地址、脚本启动命令和备份兼容性。1.9.0 的构建与桌面验收详情见 [验收记录](./docs/acceptance-1.9.0.md)，上一版记录见 [1.8.0 验收](./docs/acceptance-1.8.0.md)。
+前端测试覆盖搜索排序、固定栏顺序、配置写入与图标队列；后端测试覆盖应用身份、来源缓存、真实快捷方式参数及工作目录、快捷方式丢失后的回退、目录与注册表通知、图标资源和缓存，以及快捷入口类型、网页地址、脚本启动命令和备份兼容性。1.9.1 设置布局修复见 [布局回归记录](./docs/acceptance-1.9.1.md)；1.9.0 的构建与桌面验收详情见 [验收记录](./docs/acceptance-1.9.0.md)，上一版记录见 [1.8.0 验收](./docs/acceptance-1.8.0.md)。
 
 窗口策略使用模拟显示器拓扑测试断屏回退、重连后下次唤醒恢复、主动拖动覆盖偏好、负坐标、屏幕编号及 DPI/工作区变化。测试不修改系统显示配置；桌面拖动、隐藏唤醒、重启恢复与物理插拔需分别验收。
 
