@@ -667,9 +667,6 @@ fn disable_window_corner_and_shadow(hwnd: isize) {
     use windows_sys::Win32::Graphics::Dwm::{
         DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DwmSetWindowAttribute,
     };
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GWL_EXSTYLE, GetWindowLongPtrW, SetWindowLongPtrW, WS_EX_NOREDIRECTIONBITMAP,
-    };
 
     unsafe {
         let hwnd = hwnd as _;
@@ -683,16 +680,8 @@ fn disable_window_corner_and_shadow(hwnd: isize) {
             std::mem::size_of::<i32>() as u32,
         );
 
-        // 2. 关闭 WS_EX_NOREDIRECTIONBITMAP，让透明区域真正透明（去除阴影/线框）
-        //    有些 WebView2 透明窗口需要这一步才能彻底消除四角残影
-        let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-        if ex_style != 0 {
-            SetWindowLongPtrW(
-                hwnd,
-                GWL_EXSTYLE,
-                ex_style & !(WS_EX_NOREDIRECTIONBITMAP as isize),
-            );
-        }
+        // Preserve Wry's DirectComposition transparency styles. The explicit window
+        // region in appearance.rs clips the desktop material as well as the WebView.
     }
 }
 
@@ -920,6 +909,7 @@ pub fn run() {
             hide_window,
             config::get_config,
             config::set_config,
+            config::set_appearance,
             autostart::set_autostart,
             autostart::get_autostart_status,
             autostart::migrate_legacy_autostart,

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Dialog } from "./Dialog";
 import { invoke } from "@tauri-apps/api/core";
 import type { AppEntry, Config, ManualApp, LaunchOverride } from "./types";
 
@@ -33,12 +34,10 @@ export function AppEditor({ target, config, onClose, onSaved }: Props) {
     }
     onSaved(next);
   });
-  return <div className="settings-overlay" onClick={() => !busy && onClose()}>
-    <section className="settings-panel editor-panel" role="dialog" aria-modal="true" aria-label={manual ? "手动应用" : "应用设置"} onClick={event => event.stopPropagation()}>
-      <div className="settings-header"><span>{manual ? "手动应用" : `应用设置 · ${app?.name}`}</span><button className="settings-close" aria-label="关闭应用设置" disabled={busy} onClick={onClose}>×</button></div>
+  return <Dialog title={manual ? "手动应用" : `应用设置 · ${app?.name}`} label="关闭应用设置" className="editor-panel" busy={busy} onClose={onClose}>
       {manual ? <><label className="form-field">应用名称<input aria-label="应用名称" value={manual.name} onChange={event => setManual({ ...manual, name: event.target.value })}/></label>
         <label className="form-field">程序路径<div className="settings-row"><input aria-label="程序路径" readOnly value={manual.path}/><button className="btn" disabled={busy} onClick={browse}>选择文件</button></div></label></> : <p className="runtime-path">{app?.path}</p>}
-      <label className="form-field">搜索别名<textarea aria-label="搜索别名" placeholder="每行一个，也可用逗号分隔。支持拼音搜索。" value={aliases} onChange={event => setAliases(event.target.value)}/></label>
+      <label className="form-field">搜索别名<textarea data-initial-focus aria-label="搜索别名" placeholder="每行一个，也可用逗号分隔。支持拼音搜索。" value={aliases} onChange={event => setAliases(event.target.value)}/></label>
       {!manual && !shellManaged && <label className="form-check"><input type="checkbox" checked={custom} onChange={event => setCustom(event.target.checked)}/>自定义启动参数和工作目录</label>}
       {shellManaged ? <p className="settings-hint">此入口由 Windows 管理启动，可设置搜索别名。</p> : <>
         <label className="form-field">启动参数<input aria-label="启动参数" disabled={!manual && !custom} value={args} onChange={event => setArgs(event.target.value)} placeholder="例如 --profile work"/></label>
@@ -52,6 +51,5 @@ export function AppEditor({ target, config, onClose, onSaved }: Props) {
           void run(async () => onSaved(await invoke<Config>("remove_manual_app", { appId: id })));
         }}>{removeConfirm ? "确认从 Luma 移除" : "移除手动应用"}</button>}</div>
       {removeConfirm && <p className="settings-hint">仅移除 Luma 中的手动记录，保留程序文件。</p>}
-    </section>
-  </div>;
+  </Dialog>;
 }

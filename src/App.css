@@ -32,7 +32,7 @@ button:disabled { cursor: default; opacity: .45; }
 button, input, textarea, select, [role="button"], summary {
   transition: background-color var(--glass-time) var(--glass-ease), border-color var(--glass-time) var(--glass-ease), box-shadow var(--glass-time) var(--glass-ease), color var(--glass-time) var(--glass-ease), transform var(--glass-time) var(--glass-ease);
 }
-:where(button, input, textarea, select, [role="button"], summary):focus-visible { outline: 2px solid var(--mv-accent); outline-offset: 3px; }
+:where(button, input, textarea, select, [role="button"], .app-tile, summary):focus-visible { outline: 2px solid var(--mv-accent); outline-offset: 3px; }
 input, textarea { caret-color: #b1f2e9; }
 input::placeholder, textarea::placeholder { color: var(--mv-text-muted); opacity: .9; }
 input[type="checkbox"] { accent-color: #8fd9da; }
@@ -57,6 +57,7 @@ input[type="checkbox"] { accent-color: #8fd9da; }
   -webkit-mask-composite: xor; mask-composite: exclude;
 }
 .launchpad::after { content: ""; position: absolute; inset: 1px 1px auto; height: 130px; pointer-events: none; z-index: 0; border-radius: inherit; background: linear-gradient(180deg, #ffffff0e, transparent); }
+.launcher-content { display: flex; flex-direction: column; flex: 1; min-height: 0; position: relative; z-index: 1; }
 .search-bar, .main-area, .footer-hint { position: relative; z-index: 1; }
 .search-bar { -webkit-app-region: drag; app-region: drag; display: flex; align-items: center; gap: 10px; padding: 22px 24px 18px; flex-shrink: 0; }
 .window-drag-handle { -webkit-app-region: drag; app-region: drag; flex: 0 0 16px; height: 44px; border: 0; border-radius: 12px; color: var(--mv-text-muted); background: transparent; cursor: grab; touch-action: none; }
@@ -90,7 +91,8 @@ input[type="checkbox"] { accent-color: #8fd9da; }
 .category-add input { min-width: 0; width: 100%; padding: 8px; font-size: 11px; color: var(--mv-text); background: #ffffff07; border: 1px solid var(--mv-border); border-radius: 12px; outline: none; }
 .category-add-btn { flex: 0 0 27px; border-radius: 11px; color: var(--mv-text-secondary); border: 1px solid var(--mv-border); background: var(--glass-face); font-size: 17px; }
 .category-add-btn:hover { background-color: #ffffff0f; }
-.app-grid { flex: 1; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill,minmax(100px,1fr)); gap: 12px; padding: 4px 20px 18px; align-content: start; scroll-padding-block: 12px; }
+.app-grid { flex: 1; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill,minmax(100px,1fr)); gap: 12px; padding: 10px 20px 18px; align-content: start; scroll-padding-block: 12px; }
+.app-tile { scroll-margin-block: 8px; }
 .app-tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 12px; min-height: 128px; padding: 19px 7px 12px; border: 1px solid #ffffff08; border-radius: 22px; cursor: pointer; background: linear-gradient(150deg,#ffffff06,#ffffff02); }
 .app-tile:hover { background-color: #ffffff0b; border-color: #c6d7f53d; box-shadow: var(--glass-shadow); transform: translateY(-2px); }
 .app-tile.selected { background: linear-gradient(140deg,#beacf91b,#b8ecea0e); border-color: #c2bcf580; box-shadow: inset 0 1px 0 #f7edff33, 0 0 0 1px #c0b3ef12, 0 8px 20px #0a0c242b; }
@@ -115,7 +117,9 @@ input[type="checkbox"] { accent-color: #8fd9da; }
 
 .settings-overlay { -webkit-app-region: no-drag; app-region: no-drag; position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px; background: #070b1e70; border-radius: var(--mv-launchpad-radius); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
 .settings-panel, .diagnostics-panel { position: relative; border: 1px solid transparent; border-radius: 28px; background: radial-gradient(ellipse at 0% 0%,#8c6ed516,transparent 65%) padding-box, linear-gradient(145deg,#20263ff5,#151e32f2) padding-box, var(--glass-rim) border-box; color: var(--mv-text); box-shadow: inset 0 1px 0 #ffffff26, 0 24px 64px #03071870; backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation)); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation)); }
-.settings-panel { width: min(500px,100%); max-height: 100%; padding: 24px; overflow-y: auto; }
+.settings-panel { width: min(500px,100%); max-height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.settings-panel > .settings-header { flex-shrink: 0; padding: 20px 24px 16px; margin: 0; }
+.panel-scroll { min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 0 12px 16px 24px; margin: 0 8px 12px 0; scrollbar-gutter: stable; }
 .settings-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; font-size: 18px; font-weight: 650; color: #e1efff; text-shadow: 0 0 20px #80d7cf20; }
 .settings-close { width: 32px; height: 32px; flex-shrink: 0; display: grid; place-items: center; color: #c2cfe5; font-size: 22px; background: #ffffff06; border: 1px solid var(--mv-border); border-radius: 13px; }
 .settings-close:hover { color: white; background-color: #ffffff10; }
@@ -157,6 +161,7 @@ input[type="checkbox"] { accent-color: #8fd9da; }
 .switch input:disabled + .switch-slider { opacity: .45; cursor: default; }
 input[type="range"] { flex: 1; min-width: 0; appearance: none; -webkit-appearance: none; height: 5px; background: linear-gradient(90deg,#b4a6e0a6,#92d7d366); border: 1px solid #ffffff13; border-radius: 20px; outline: none; }
 input[type="range"]::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 18px; height: 18px; border: 1px solid #ffffff88; border-radius: 50%; background: linear-gradient(#fff,#c9daed); box-shadow: 0 2px 7px #060c234d, 0 0 12px #b3d7eb26; cursor: pointer; }
+input[type="range"]:focus-visible { outline: 2px solid var(--mv-accent); outline-offset: 6px; }
 
 .editor-panel { width: min(560px,100%); }
 .form-field { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; color: #d2def2; font-size: 12px; }
@@ -229,7 +234,10 @@ summary { cursor: pointer; }
   .category-item { font-size: 11px; }
   .footer-hint { padding-inline: 14px; gap: 6px; }
   .settings-overlay { padding: 12px; }
-  .settings-panel, .diagnostics-panel { padding: 18px; border-radius: 24px; }
+  .settings-panel, .diagnostics-panel { border-radius: 24px; }
+  .diagnostics-panel { padding: 18px; }
+  .settings-panel > .settings-header { padding: 18px 18px 14px; }
+  .panel-scroll { padding-left: 18px; }
   .diagnostics-list { width: 125px; }
   .diagnostics-body { gap: 12px; }
 }

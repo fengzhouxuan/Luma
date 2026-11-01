@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Dialog } from "./Dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { BackupPreview, Config, UpdateInfo } from "./types";
@@ -28,12 +29,11 @@ export function ManagementTools({ onAdd, onPreview }: Props) {
 
 export function ImportPreview({ preview, onClose, onImported }: { preview: BackupPreview; onClose: () => void; onImported: (config: Config) => void }) {
   const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
-  return <div className="settings-overlay" onClick={() => !busy && onClose()}><section className="settings-panel editor-panel" role="dialog" aria-modal="true" aria-label="确认导入配置" onClick={event => event.stopPropagation()}>
-    <div className="settings-header"><span>确认导入配置</span><button className="settings-close" aria-label="取消导入" disabled={busy} onClick={onClose}>×</button></div>
+  return <Dialog title="确认导入配置" label="取消导入" className="editor-panel" busy={busy} onClose={onClose}>
     <p>手动应用 {preview.manual_apps} · 搜索别名 {preview.aliases} · 分类 {preview.categories}</p><p>置顶 {preview.pinned} · 隐藏 {preview.hidden} · 扫描目录 {preview.directories}</p>
     <p className="settings-hint">导入将替换上述个人配置。当前配置会先自动备份；本机快捷键、自启和显示器位置保留。</p>
     {preview.missing.length > 0 && <details open><summary>{preview.missing.length} 个路径在本机不存在，导入后可修正</summary><pre className="path-list">{preview.missing.join("\n")}</pre></details>}
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="panel-actions"><button className="btn btn-primary" disabled={busy} onClick={async () => { setBusy(true); try { onImported(await invoke<Config>("import_config_backup", { json: preview.json })); } catch (error) { setError(String(error)); } finally { setBusy(false); } }}>确认导入</button><button className="btn" disabled={busy} onClick={onClose}>取消</button></div>
-  </section></div>;
+  </Dialog>;
 }

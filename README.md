@@ -2,7 +2,7 @@
 
 适用于 Windows 的轻量应用启动器。按 **`Alt+Shift+Space`** 唤出，用名称、拼音或首字母搜索应用，再按回车启动。
 
-当前源码版本：**1.6.0**。基于 Tauri 2、React、TypeScript 和 Rust，提供 Liquid Glass 深色玻璃界面、系统托盘与键盘操作。
+当前源码版本：**1.6.1**。基于 Tauri 2、React、TypeScript 和 Rust，提供 Liquid Glass 深色玻璃界面、系统托盘与键盘操作。
 
 [下载安装包](https://github.com/fengzhouxuan/Luma/releases) · [更新日志](./CHANGELOG.md) · [反馈问题](https://github.com/fengzhouxuan/Luma/issues)
 
@@ -20,7 +20,7 @@ EXE 安装包默认安装到当前用户的 `%LOCALAPPDATA%\Luma`，并创建开
 
 ## 功能
 
-界面按用户指定的 [StyleKit Liquid Glass](https://www.stylekit.top/zh/styles/liquid-glass) 参考适配，统一主窗口、弹层、菜单与表单；Windows 使用原生 Acrylic 模糊桌面背景，并对窗口圆角进行实际裁切。参考和组件规范见 [界面样式基准](./docs/ui-style.md)。
+界面按用户指定的 [StyleKit Liquid Glass](https://www.stylekit.top/zh/styles/liquid-glass) 参考适配，统一主窗口、弹层、菜单与表单；Windows 使用原生 Acrylic 模糊桌面背景，并对窗口圆角进行实际裁切。参考和组件规范见 [界面样式基准](./docs/ui-style.md)。弹层支持独立滚动与焦点约束；外观滑块支持键盘保存，右键菜单支持方向键、Home / End 与 Enter。
 
 - **快速搜索**：支持中文名称、英文、全拼、拼音首字母、分词及模糊输入。精确和前缀匹配优先，同级结果按置顶、启动次数和最近启动时间排序。
 - **可靠启动**：普通启动优先使用原始快捷方式，保留参数和工作目录；快捷方式缺失或启动失败时尝试直接启动目标。支持以管理员身份启动。

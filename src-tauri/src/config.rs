@@ -186,6 +186,20 @@ pub fn get_config() -> Config {
 }
 
 #[tauri::command]
+pub fn set_appearance(appearance: Appearance, app: tauri::AppHandle) -> Result<(), String> {
+    if !appearance.opacity.is_finite()
+        || !(0.3..=0.95).contains(&appearance.opacity)
+        || !appearance.corner_radius.is_finite()
+        || !(0.0..=48.0).contains(&appearance.corner_radius)
+    {
+        return Err("外观设置超出有效范围".into());
+    }
+    update(|current| current.appearance = appearance.clone())?;
+    crate::appearance::refresh(&app);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn set_config(cfg: Config, app: tauri::AppHandle) -> Result<(), String> {
     // 外观和热键保存不能覆盖同时更新的置顶、分类或使用记录。
     update(|current| {

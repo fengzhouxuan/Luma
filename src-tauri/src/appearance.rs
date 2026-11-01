@@ -79,12 +79,78 @@ pub fn after_show(window: &tauri::WebviewWindow) {
     if let Err(error) = remove_native_frame(window) {
         crate::diagnostics::record("窗口", "玻璃边框", None, error);
     }
+    #[cfg(windows)]
+    if let Err(error) = clip(window).and_then(|()| verify_clip(window)) {
+        crate::diagnostics::record("窗口", "圆角核验", None, error);
+    }
+}
+
+#[cfg(windows)]
+fn verify_clip(window: &tauri::WebviewWindow) -> Result<(), String> {
+    use windows_sys::Win32::Graphics::Gdi::{
+        CreateRectRgn, DeleteObject, GetRgnBox, GetWindowRgn, PtInRegion,
+    };
+    let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+    let size = window.outer_size().map_err(|e| e.to_string())?;
+    unsafe {
+        // Read a copy of the region actually held by Windows, not the region we requested.
+        let copy = CreateRectRgn(0, 0, 0, 0);
+        if copy.is_null() {
+            return Err("无法创建圆角核验区域".into());
+        }
+        let mut bounds = std::mem::zeroed();
+        let present = GetWindowRgn(hwnd.0 as _, copy) > 0;
+        let valid_bounds = GetRgnBox(copy, &mut bounds) > 0
+            && bounds.left == 0
+            && bounds.top == 0
+            && bounds.right == size.width as i32
+            && bounds.bottom == size.height as i32;
+        let w = size.width as i32;
+        let h = size.height as i32;
+        let corners = [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]
+            .map(|(x, y)| PtInRegion(copy, x, y) == 0);
+        let center = PtInRegion(copy, w / 2, h / 2) != 0;
+        DeleteObject(copy);
+        let rounded = crate::config::get().appearance.corner_radius > 1.0;
+        if !present || !valid_bounds || !center || (rounded && !corners.iter().all(|value| *value))
+        {
+            return Err(format!(
+                "原生区域核验失败：区域={present} 边界={valid_bounds} 中心={center} 四角={corners:?}"
+            ));
+        }
+        crate::diagnostics::record(
+            "窗口",
+            "圆角核验",
+            None,
+            format!(
+                "原生窗口区域 {}×{}，边界一致，中心可见，四角排除={corners:?}",
+                w, h
+            ),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn rounded_region(width: i32, height: i32, radius: i32) -> windows_sys::Win32::Graphics::Gdi::HRGN {
+    unsafe {
+        windows_sys::Win32::Graphics::Gdi::CreateRoundRectRgn(
+            0,
+            0,
+            // GDI's rounded region excludes its last coordinate; +1 yields an
+            // actual GetRgnBox of exactly width × height, including at radius 0.
+            width + 1,
+            height + 1,
+            radius * 2,
+            radius * 2,
+        )
+    }
 }
 
 #[cfg(windows)]
 fn clip(window: &tauri::WebviewWindow) -> Result<(), String> {
     use std::sync::Mutex;
-    use windows_sys::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn};
+    use windows_sys::Win32::Graphics::Gdi::{DeleteObject, SetWindowRgn};
     static LAST: Mutex<Option<(i32, i32, i32)>> = Mutex::new(None);
     let size = window.outer_size().map_err(|e| e.to_string())?;
     if size.width == 0 || size.height == 0 {
@@ -113,7 +179,7 @@ fn clip(window: &tauri::WebviewWindow) -> Result<(), String> {
     }
     let hwnd = window.hwnd().map_err(|e| e.to_string())?;
     unsafe {
-        let region = CreateRoundRectRgn(0, 0, shape.0 + 1, shape.1 + 1, radius * 2, radius * 2);
+        let region = rounded_region(shape.0, shape.1, radius);
         if region.is_null() || SetWindowRgn(hwnd.0 as _, region, 1) == 0 {
             if !region.is_null() {
                 DeleteObject(region);
@@ -126,6 +192,40 @@ fn clip(window: &tauri::WebviewWindow) -> Result<(), String> {
         // SetWindowRgn 成功后由系统接管 region，不能再次 DeleteObject。
     }
     Ok(())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    #[test]
+    fn native_region_matches_window_bounds_and_excludes_only_rounded_corners() {
+        use windows_sys::Win32::Graphics::Gdi::{DeleteObject, GetRgnBox, PtInRegion};
+        for (width, height, radius) in [
+            (900, 640, 0),
+            (900, 640, 12),
+            (900, 640, 24),
+            (1350, 960, 36),
+        ] {
+            unsafe {
+                let region = super::rounded_region(width, height, radius);
+                assert!(!region.is_null());
+                let mut bounds = std::mem::zeroed();
+                assert!(GetRgnBox(region, &mut bounds) > 0);
+                let actual = (bounds.left, bounds.top, bounds.right, bounds.bottom);
+                let corners = [
+                    (0, 0),
+                    (width - 1, 0),
+                    (0, height - 1),
+                    (width - 1, height - 1),
+                ]
+                .map(|(x, y)| PtInRegion(region, x, y) != 0);
+                let center = PtInRegion(region, width / 2, height / 2) != 0;
+                DeleteObject(region);
+                assert_eq!(actual, (0, 0, width, height), "radius={radius}");
+                assert!(center);
+                assert_eq!(corners, [radius == 0; 4]);
+            }
+        }
+    }
 }
 
 pub fn setup(window: &tauri::WebviewWindow) {
@@ -174,6 +274,9 @@ pub fn refresh(app: &tauri::AppHandle) {
         let _ = window.run_on_main_thread(move || {
             if let Err(error) = clip(&target) {
                 crate::diagnostics::record("窗口", "圆角裁切", None, error);
+            }
+            if let Err(error) = verify_clip(&target) {
+                crate::diagnostics::record("窗口", "圆角核验", None, error);
             }
         });
     }

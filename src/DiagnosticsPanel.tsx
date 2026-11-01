@@ -23,7 +23,7 @@ export function DiagnosticsPanel({ apps, config, snapshot, initialId, onClose, o
   const report = snapshot?.report;
   const shellManaged = !!app && (!!app.shortcut_path || app.path.startsWith("shell:AppsFolder\\") || app.path.startsWith("::{"));
   return <div className="settings-overlay" onClick={onClose}>
-    <section className="diagnostics-panel" onClick={(event) => event.stopPropagation()} aria-label="应用诊断">
+    <section data-focus-scope tabIndex={-1} role="dialog" aria-modal="true" className="diagnostics-panel" onClick={(event) => event.stopPropagation()} aria-label="应用诊断">
       <div className="settings-header"><span>应用诊断 <small>Luma {snapshot?.version ?? ""}</small></span>
         <div className="panel-actions"><button className="btn btn-sm" onClick={onRefresh}>刷新诊断</button>
           <button className="settings-close" aria-label="关闭诊断" onClick={onClose}>×</button></div></div>
@@ -35,7 +35,7 @@ export function DiagnosticsPanel({ apps, config, snapshot, initialId, onClose, o
         {snapshot?.icons && <p>图标请求 {snapshot.icons.requests} · 已完成 {snapshot.icons.completed} · 缓存命中 {snapshot.icons.cache_hits} · 超时 {snapshot.icons.timeouts}<br/>平均排队 {snapshot.icons.average_queue_ms.toFixed(1)}ms · 最长排队 {snapshot.icons.max_queue_ms.toFixed(1)}ms · 平均提取 {snapshot.icons.average_extraction_ms.toFixed(1)}ms</p>}
         <small>扫描数为各来源去重前数据；耗时保留该来源最近一次扫描结果。图标统计限本次运行，不上传。</small>
       </div></details>
-      <input className="diagnostics-search" aria-label="搜索诊断应用" placeholder="搜索应用名称、路径或来源" value={query} onChange={(event) => setQuery(event.target.value)}/>
+      <input data-initial-focus className="diagnostics-search" aria-label="搜索诊断应用" placeholder="搜索应用名称、路径或来源" value={query} onChange={(event) => setQuery(event.target.value)}/>
       <div className="diagnostics-body">
         <div className="diagnostics-list">{matches.map((entry) => <button key={entry.id} className={entry.id === app?.id ? "active" : ""}
           onClick={() => setSelected(entry.id)}><strong>{entry.name}</strong><span>{entry.hidden_reason ?? entry.source}</span></button>)}

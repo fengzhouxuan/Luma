@@ -7,6 +7,9 @@ import { DiagnosticsPanel } from "./DiagnosticsPanel";
 import { AppEditor, type EditorTarget } from "./AppEditor";
 import { AppMenu } from "./AppMenu";
 import { UiIcon, CategoryIcon } from "./UiIcon";
+import { Dialog } from "./Dialog";
+import { useOverlayFocus } from "./overlayFocus";
+import { LatestWriter } from "./latestWriter";
 import { ManagementTools, ImportPreview } from "./ManagementTools";
 import type { AppEntry, Config, HotkeyConfig, Usage, ScanResult, Diagnostics, ManualApp, AutostartStatus, BackupPreview } from "./types";
 import { IconLoader, iconKey, type IconTarget } from "./iconLoader";
@@ -46,7 +49,22 @@ function App() {
   const [extraDirDraft, setExtraDirDraft] = useState("");
   const [activeCategory, setActiveCategory] = useState<string>("全部");
   const [categoryDraft, setCategoryDraft] = useState("");
+  const rootRef = useRef<HTMLDivElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const overlayKey = menu ? `menu:${menu.app.id}` : preview ? "import" : editor ? "editor" : diagnosticsOpen ? "diagnostics" : settingsOpen ? "settings" : null;
+  useOverlayFocus(rootRef, overlayKey, openerRef, inputRef);
+  const appearanceWriter = useRef<LatestWriter<Config["appearance"]> | null>(null);
+  if (!appearanceWriter.current) appearanceWriter.current = new LatestWriter(
+    appearance => invoke("set_appearance", { appearance }), error => setNotice(`保存外观失败：${error}`));
+  useEffect(() => () => { void appearanceWriter.current?.flush(); }, []);
+  const changeAppearance = (patch: Partial<Config["appearance"]>) => {
+    if (!config) return;
+    const appearance = { ...config.appearance, ...patch };
+    setConfig(current => current ? { ...current, appearance } : current);
+    appearanceWriter.current!.set(appearance);
+  };
+  const flushAppearance = () => { void appearanceWriter.current?.flush(); };
   const gridRef = useRef<HTMLDivElement>(null);
   const scanInFlight = useRef<Promise<void> | null>(null);
   const scanPending = useRef(false);
@@ -322,14 +340,11 @@ function App() {
     if (preview) { setPreview(null); return; }
     if (editor) { setEditor(null); return; }
     if (menu) { setMenu(null); return; }
-    if (diagnosticsOpen) { setDiagnosticsOpen(false); setTimeout(() => inputRef.current?.focus(), 0); return; }
+    if (diagnosticsOpen) { setDiagnosticsOpen(false); return; }
     if (settingsOpen) {
       setSettingsOpen(false);
       setCapturing(false);
-      // 关键：关闭面板后把焦点还给搜索框。
-      // 否则焦点会落在已卸载的按钮上、回退到 body，
-      // 导致后续键盘事件不再冒泡到 .launchpad，Esc 失效。
-      setTimeout(() => inputRef.current?.focus(), 0);
+      // useOverlayFocus restores the opener after the panel leaves the DOM.
       return;
     }
     invoke("hide_window");
@@ -523,7 +538,10 @@ function App() {
   }, [selectedIndex]);
 
   return (
-    <div className="launchpad" onKeyDown={handleKeyDown}>
+    <div className="launchpad" ref={rootRef} onKeyDown={handleKeyDown} onFocusCapture={event => {
+      if (!overlayKey && event.target instanceof HTMLElement) openerRef.current = event.target;
+    }}>
+      <div className="launcher-content" inert={!!overlayKey}>
       <div className="search-bar" data-tauri-drag-region>
         <button type="button" className="window-drag-handle" aria-label="拖动窗口" title="按住拖动窗口" data-tauri-drag-region />
         <span className="app-wordmark" aria-hidden="true" data-tauri-drag-region>Luma</span>
@@ -698,19 +716,10 @@ function App() {
         </label>
       </div>
 
+      </div>
       {/* 设置面板 */}
       {settingsOpen && config && (
-        <div className="settings-overlay" onClick={() => hideLauncher()}>
-          <div
-            className="settings-panel"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="settings-header">
-              <span>设置</span>
-              <button className="settings-close" onClick={() => hideLauncher()}>
-                ×
-              </button>
-            </div>
+        <Dialog title="设置" label="关闭设置" onClose={hideLauncher}>
 
             <div className="settings-section">
               <div className="settings-label">Luma {snapshot?.version ?? "1.2.0"}</div>
@@ -823,12 +832,11 @@ function App() {
                   max="0.95"
                   step="0.05"
                   value={config.appearance.opacity}
-                  onChange={(e) => {
-                    const opacity = Number(e.target.value);
-                    setConfig({ ...config, appearance: { ...config.appearance, opacity } });
-                  }}
-                  onMouseUp={() => saveConfig(config)}
-                  onTouchEnd={() => saveConfig(config)}
+                  aria-label="玻璃深度"
+                  onChange={event => changeAppearance({ opacity: Number(event.target.value) })}
+                  onPointerUp={flushAppearance}
+                  onKeyUp={flushAppearance}
+                  onBlur={flushAppearance}
                 />
                 <span className="settings-value">
                   {Math.round(config.appearance.opacity * 100)}%
@@ -843,12 +851,11 @@ function App() {
                   max="24"
                   step="2"
                   value={config.appearance.corner_radius}
-                  onChange={(e) => {
-                    const corner_radius = Number(e.target.value);
-                    setConfig({ ...config, appearance: { ...config.appearance, corner_radius } });
-                  }}
-                  onMouseUp={() => saveConfig(config)}
-                  onTouchEnd={() => saveConfig(config)}
+                  aria-label="圆角大小"
+                  onChange={event => changeAppearance({ corner_radius: Number(event.target.value) })}
+                  onPointerUp={flushAppearance}
+                  onKeyUp={flushAppearance}
+                  onBlur={flushAppearance}
                 />
                 <span className="settings-value">
                   {config.appearance.corner_radius}px
@@ -940,11 +947,10 @@ function App() {
                   })}
               </div>
             </div>
-          </div>
-        </div>
+        </Dialog>
       )}
       {diagnosticsOpen && <DiagnosticsPanel key={diagnosticId ?? "all"} apps={categorizedApps} config={config}
-        snapshot={snapshot} initialId={diagnosticId} onClose={() => { setDiagnosticsOpen(false); setTimeout(() => inputRef.current?.focus(), 0); }}
+        snapshot={snapshot} initialId={diagnosticId} onClose={() => setDiagnosticsOpen(false)}
         onRefresh={() => void refreshDiagnostics()} onPin={(app) => void togglePinned(app)} onHide={(app) => void toggleHidden(app)}/>}
       {editor && config && <AppEditor key={"app" in editor ? editor.app.id : editor.manual.id} target={editor} config={config} onClose={() => setEditor(null)} onSaved={personalSaved}/>}
       {preview && <ImportPreview preview={preview} onClose={() => setPreview(null)} onImported={personalSaved}/>}
