@@ -10,6 +10,7 @@ mod icon_resource;
 mod icons;
 mod launch;
 mod portable;
+mod position;
 mod runtime;
 mod shortcuts;
 mod watcher;
@@ -900,15 +901,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // 已有实例在运行：唤醒它的窗口，新实例随后自动退出
-            use std::sync::atomic::Ordering;
-            use tauri::Manager;
-            if let Some(window) = app.get_webview_window("main") {
-                double_alt::WINDOW_VISIBLE.store(true, Ordering::SeqCst);
-                let _ = window.show();
-                if let Ok(hwnd) = window.hwnd() {
-                    force_foreground(hwnd.0 as isize);
-                }
-            }
+            runtime::show(app);
         }))
         .invoke_handler(tauri::generate_handler![
             scan_apps,
@@ -1017,15 +1010,7 @@ pub fn run() {
                                         let _ = win.hide();
                                     } else {
                                         // 当前隐藏 → 显示并抢焦点
-                                        double_alt::WINDOW_VISIBLE.store(true, Ordering::SeqCst);
-                                        let _ = win.show();
-
-                                        // 抢焦点必须在本闭包（主线程）内直接调用，
-                                        // 因为 SetFocus/SetActiveWindow/SetForegroundWindow
-                                        // 都要求从拥有窗口的 UI 线程执行
-                                        if let Ok(hwnd) = win.hwnd() {
-                                            force_foreground(hwnd.0 as isize);
-                                        }
+                                        runtime::show(win.app_handle());
                                     }
                                 });
                             }
@@ -1041,5 +1026,9 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|_app_handle, _event| {});
+    app.run(|app_handle, event| {
+        if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+            position::flush(app_handle);
+        }
+    });
 }

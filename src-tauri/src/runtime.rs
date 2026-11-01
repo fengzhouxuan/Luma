@@ -2,6 +2,7 @@ use tauri::{Emitter, Manager};
 
 pub fn show(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
+        crate::position::before_show(&window);
         #[cfg(windows)]
         crate::double_alt::WINDOW_VISIBLE.store(true, std::sync::atomic::Ordering::SeqCst);
         let _ = window.show();
@@ -118,6 +119,9 @@ pub fn setup(app: &mut tauri::App) -> tauri::Result<()> {
         }) {
             crate::diagnostics::record("窗口", "拖动", None, error.to_string());
         }
+    }
+    if let Err(error) = crate::position::setup(app) {
+        crate::diagnostics::record("窗口", "位置监听", None, error);
     }
     if let Err(error) = crate::watcher::start(app.handle().clone()) {
         crate::diagnostics::record("监听", "系统", None, error.to_string());

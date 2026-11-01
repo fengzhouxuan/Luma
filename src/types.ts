@@ -25,6 +25,13 @@ export interface Config {
   pinned_apps?: string[];
   hidden_apps?: string[];
   usage?: Record<string, Usage>;
+  window_position?: {
+    monitor_id: string;
+    monitor_name: string;
+    scale_factor: number;
+    relative_x: number;
+    relative_y: number;
+  } | null;
 }
 export interface ScanReport {
   revision: number;

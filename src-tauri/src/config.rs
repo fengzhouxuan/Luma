@@ -57,6 +57,9 @@ pub struct Config {
     pub hidden_apps: Vec<String>,
     #[serde(default)]
     pub usage: std::collections::HashMap<String, Usage>,
+    /// 仅由用户主动拖动更新；自动断屏回退不覆盖。
+    #[serde(default)]
+    pub window_position: Option<crate::position::SavedPosition>,
 }
 
 impl Default for Config {
@@ -78,6 +81,7 @@ impl Default for Config {
             pinned_apps: Vec::new(),
             hidden_apps: Vec::new(),
             usage: Default::default(),
+            window_position: None,
         }
     }
 }
@@ -331,11 +335,12 @@ mod tests {
     #[test]
     fn legacy_config_gets_defaults_for_new_preferences() {
         let mut old = serde_json::to_value(Config::default()).unwrap();
-        for field in ["usage", "pinned_apps", "hidden_apps"] {
+        for field in ["usage", "pinned_apps", "hidden_apps", "window_position"] {
             old.as_object_mut().unwrap().remove(field);
         }
         let cfg: Config = serde_json::from_value(old).unwrap();
         assert!(cfg.pinned_apps.is_empty() && cfg.hidden_apps.is_empty() && cfg.usage.is_empty());
+        assert!(cfg.window_position.is_none());
     }
     #[test]
     fn usage_is_per_identity_and_counts_successful_launches() {
