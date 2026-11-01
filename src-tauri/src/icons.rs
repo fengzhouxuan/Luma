@@ -335,12 +335,17 @@ fn cached_icon(cache: &mut IconCache, path: &str, shortcut_path: Option<&str>) -
         format!("图标提取失败；{}", errors.join("；"))
     };
     crate::diagnostics::record("图标", shortcut_path.unwrap_or(path), None, message);
-    cache.put(key, fingerprint, icon.clone(), retry, now);
+    // 虚拟 Shell 项没有文件时间戳，缩短缓存，避免应用更新后长期使用旧图标。
+    let short_lived = retry || target.starts_with("shell:AppsFolder\\");
+    cache.put(key, fingerprint, icon.clone(), short_lived, now);
     icon
 }
 
 #[cfg(windows)]
 fn extract_icon(path: &str) -> Result<String, String> {
+    if crate::packaged::app_id(path).is_some() {
+        return crate::packaged::icon(path);
+    }
     if !Path::new(path).is_file() {
         return Err(format!("图标来源文件不存在或不可读: {path}"));
     }

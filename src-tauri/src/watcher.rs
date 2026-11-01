@@ -120,8 +120,12 @@ mod windows {
         let mut watches = Vec::new();
         for hive in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
             for view in [KEY_WOW64_64KEY, KEY_WOW64_32KEY] {
-                for source in ["App Paths", "Uninstall"] {
-                    let path = format!(r"SOFTWARE\Microsoft\Windows\CurrentVersion\{source}");
+                for path in [
+                    r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths",
+                    r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+                    r"SOFTWARE\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages",
+                    r"SOFTWARE\Classes\ActivatableClasses\Package",
+                ] {
                     if let Ok(key) =
                         RegKey::predef(hive).open_subkey_with_flags(&path, KEY_READ | view)
                     {

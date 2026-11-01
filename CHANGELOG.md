@@ -4,6 +4,14 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.2.1] - 2026-11-01
+
+### 修复
+
+- 补充 Windows AppsFolder 商店/MSIX 应用发现，修复没有普通快捷方式的 ChatGPT 搜索不到的问题。
+- 使用稳定 AUMID 识别和激活商店应用，通过 Shell 获取图标，避免依赖受保护且随更新变化的安装路径。
+- 监听包注册变化；诊断显示应用模型启动方式，管理员启动不支持时给出明确提示。
+
 ## [1.2.0] - 2026-11-01
 
 ### 新增

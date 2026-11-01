@@ -29,6 +29,13 @@ pub async fn launch_app(app_id: String, admin: bool) -> Result<LaunchResult, Str
 }
 
 pub fn launch_entry(app: &AppEntry, admin: bool) -> Result<(), String> {
+    #[cfg(windows)]
+    if let Some(id) = crate::packaged::app_id(&app.path) {
+        if admin {
+            return Err("商店 / MSIX 应用由 Windows 管理启动，不支持以管理员身份启动".into());
+        }
+        return crate::packaged::activate(id, &app.arguments);
+    }
     // 普通启动交给 Shell 打开原快捷方式，保留其全部启动语义。
     if !admin {
         if let Some(shortcut) = app

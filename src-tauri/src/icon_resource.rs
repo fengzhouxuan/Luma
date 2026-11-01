@@ -134,6 +134,21 @@ pub fn extract(path: &str, index: i32) -> Result<String, String> {
             pixel[3] = if mask[0] == 0 { 255 } else { 0 };
         }
     }
+    encode_pixels(width, height, pixels)
+}
+
+pub fn shell_bitmap(bitmap: HBITMAP) -> Result<String, String> {
+    let bitmap = Bitmap(bitmap);
+    let (width, height, mut pixels) = read_bitmap(bitmap.0)?;
+    if pixels.chunks_exact(4).all(|pixel| pixel[3] == 0) {
+        for pixel in pixels.chunks_exact_mut(4) {
+            pixel[3] = 255;
+        }
+    }
+    encode_pixels(width, height, pixels)
+}
+
+fn encode_pixels(width: u32, height: u32, mut pixels: Vec<u8>) -> Result<String, String> {
     for pixel in pixels.chunks_exact_mut(4) {
         pixel.swap(0, 2);
         let alpha = pixel[3] as u32;

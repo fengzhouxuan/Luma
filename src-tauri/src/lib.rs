@@ -13,6 +13,8 @@ mod runtime;
 mod watcher;
 
 mod model;
+#[cfg(windows)]
+mod packaged;
 use model::AppEntry;
 
 /// 扫描应用：开始菜单 .lnk + 注册表 App Paths
@@ -64,6 +66,8 @@ fn scan_source(source: usize) -> Vec<AppEntry> {
 
         // 3. 用户级和系统级安装记录（含没有快捷方式的应用）
         discovery::scan_installed_apps(&mut apps, &mut seen);
+        #[cfg(windows)]
+        packaged::scan(&mut apps, &mut seen);
     }
     if source == 2 {
         scan_game_dirs(&mut apps, &mut seen);

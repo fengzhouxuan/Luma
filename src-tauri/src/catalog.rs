@@ -5,7 +5,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 const FULL_INTERVAL: Duration = Duration::from_secs(300);
-const NAMES: [&str; 3] = ["开始菜单", "安装记录与 App Paths", "程序目录"];
+const NAMES: [&str; 3] = ["开始菜单", "安装记录、App Paths 与商店应用", "程序目录"];
 
 #[derive(Clone, Default, Serialize)]
 pub struct ScanReport {

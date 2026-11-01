@@ -1996,7 +1996,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "luma"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "base64 0.23.1",
  "glob",
@@ -2008,6 +2008,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
+ "windows",
  "windows-icons",
  "windows-sys 0.59.0",
  "winreg 0.52.0",
