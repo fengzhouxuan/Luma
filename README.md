@@ -2,7 +2,7 @@
 
 适用于 Windows 的轻量应用启动器。按 **`Alt+Shift+Space`** 唤出，用名称、拼音或首字母搜索应用，再按回车启动。
 
-当前源码版本：**1.6.4**。基于 Tauri 2、React、TypeScript 和 Rust，提供 Liquid Glass 深色玻璃界面、系统托盘与键盘操作。
+当前源码版本：**1.6.5**。基于 Tauri 2、React、TypeScript 和 Rust，提供 Liquid Glass 深色玻璃界面、系统托盘与键盘操作。
 
 [下载安装包](https://github.com/fengzhouxuan/Luma/releases) · [更新日志](./CHANGELOG.md) · [反馈问题](https://github.com/fengzhouxuan/Luma/issues)
 

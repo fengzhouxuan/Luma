@@ -691,11 +691,9 @@ function App() {
                       {app.name.charAt(0).toUpperCase()}
                     </div>
                   )}
+                  {config?.pinned_apps?.includes(app.id) && <span className="app-pin-corner" aria-hidden="true"><UiIcon name="star"/></span>}
                 </div>
-                <span className="app-name-row">
-                  {config?.pinned_apps?.includes(app.id) && <span className="app-pin-mark" aria-hidden="true" title="已置顶"><UiIcon name="star"/></span>}
-                  <span className="app-name">{app.name}</span>
-                </span>
+                <span className="app-name">{app.name}</span>
               </div>
             ))
           )}

@@ -1,6 +1,6 @@
 [package]
 name = "luma"
-version = "1.6.4"
+version = "1.6.5"
 description = "Luma — a lightweight macOS-style app launcher for Windows"
 authors = ["fengzhouxuan"]
 edition = "2024"

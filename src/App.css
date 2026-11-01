@@ -97,7 +97,7 @@ input[type="checkbox"] { accent-color: #8fd9da; }
 .app-tile:hover { background-color: #ffffff0b; border-color: #c6d7f53d; box-shadow: var(--glass-shadow); transform: translateY(-2px); }
 .app-tile.selected { background: linear-gradient(140deg,#beacf91b,#b8ecea0e); border-color: #c2bcf580; box-shadow: inset 0 1px 0 #f7edff33, 0 0 0 1px #c0b3ef12, 0 8px 20px #0a0c242b; }
 .app-tile:active { transform: scale(.975); }
-.app-icon { width: 54px; height: 54px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.app-icon { position: relative; width: 54px; height: 54px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .app-icon img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; border-radius: 13px; filter: drop-shadow(0 6px 8px #03081433); }
 .app-icon-fallback { width: 100%; height: 100%; display: grid; place-items: center; font-size: 25px; font-weight: 500; border: 1px solid #f0e5ff2b; border-radius: 16px; color: #e9e8ff; background: linear-gradient(135deg,#b18ee42b,#79c9ca20); box-shadow: inset 0 1px 0 #ffffff1c; }
 .app-name { font-size: 12px; line-height: 1.4; text-align: center; color: #e5eaf6; max-width: 100%; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; text-shadow: 0 1px 2px #03081250; }
@@ -259,7 +259,8 @@ summary { cursor: pointer; }
 .toast button { display: grid; place-items: center; padding: 0; }
 .toast button > .ui-icon { width: 16px; height: 16px; }
 
-.app-name-row { display: flex; align-items: flex-start; justify-content: center; gap: 4px; max-width: 100%; min-width: 0; }
-.app-name-row .app-name { min-width: 0; }
-.app-pin-mark { flex: 0 0 10px; display: grid; place-items: center; height: 16px; color: #d3c18e; opacity: .85; }
-.app-pin-mark > .ui-icon { width: 10px; height: 10px; fill: currentColor; }
+
+/* Pinned status folds over the application icon corner, rather than floating above it. */
+.app-pin-corner { position: absolute; top: -4px; left: -4px; width: 22px; height: 22px; border-radius: 5px 0 0 0; clip-path: polygon(0 0,100% 0,0 100%); color: #25283c; background: linear-gradient(135deg,#ead49b,#c5a566); pointer-events: none; }
+.app-pin-corner > .ui-icon { position: absolute; top: 3px; left: 3px; width: 9px; height: 9px; fill: currentColor; stroke-width: 1.2; }
+@media (forced-colors: active) { .app-pin-corner { background: Highlight; color: HighlightText; forced-color-adjust: none; } }
