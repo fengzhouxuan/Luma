@@ -231,6 +231,10 @@ function App() {
     if (!config) return;
     const root = document.documentElement;
     root.style.setProperty("--mv-launchpad-opacity", String(config.appearance.opacity));
+    // With native backdrop disabled, keep sharp desktop text from showing through.
+    root.style.setProperty("--mv-launchpad-tint", String(0.985 + config.appearance.opacity * 0.015));
+    root.style.setProperty("--mv-glass-cloud", String(0.06 + config.appearance.opacity * 0.18));
+    root.style.setProperty("--mv-glass-cyan", String(0.02 + config.appearance.opacity * 0.1));
     root.style.setProperty("--mv-launchpad-radius", `${config.appearance.corner_radius}px`);
   }, [config]);
 

@@ -111,7 +111,9 @@ fn verify_clip(window: &tauri::WebviewWindow) -> Result<(), String> {
             .map(|(x, y)| PtInRegion(copy, x, y) == 0);
         let center = PtInRegion(copy, w / 2, h / 2) != 0;
         DeleteObject(copy);
-        let rounded = crate::config::get().appearance.corner_radius > 1.0;
+        let rounded = crate::config::get().appearance.corner_radius
+            * window.scale_factor().unwrap_or(1.0)
+            >= 8.0;
         if !present || !valid_bounds || !center || (rounded && !corners.iter().all(|value| *value))
         {
             return Err(format!(
@@ -133,17 +135,31 @@ fn verify_clip(window: &tauri::WebviewWindow) -> Result<(), String> {
 
 #[cfg(windows)]
 fn rounded_region(width: i32, height: i32, radius: i32) -> windows_sys::Win32::Graphics::Gdi::HRGN {
+    use windows_sys::Win32::Graphics::Gdi::{
+        CombineRgn, CreateRectRgn, CreateRoundRectRgn, DeleteObject, RGN_AND,
+    };
+    // Expand the hard native curve by two physical pixels, then intersect it with
+    // the exact window bounds. CSS owns the visible, antialiased edge.
     unsafe {
-        windows_sys::Win32::Graphics::Gdi::CreateRoundRectRgn(
-            0,
-            0,
-            // GDI's rounded region excludes its last coordinate; +1 yields an
-            // actual GetRgnBox of exactly width × height, including at radius 0.
-            width + 1,
-            height + 1,
-            radius * 2,
-            radius * 2,
-        )
+        let curve = CreateRoundRectRgn(-2, -2, width + 3, height + 3, radius * 2, radius * 2);
+        let bounds = CreateRectRgn(0, 0, width, height);
+        if curve.is_null() || bounds.is_null() {
+            if !curve.is_null() {
+                DeleteObject(curve);
+            }
+            if !bounds.is_null() {
+                DeleteObject(bounds);
+            }
+            return std::ptr::null_mut();
+        }
+        let result = CombineRgn(curve, curve, bounds, RGN_AND);
+        DeleteObject(bounds);
+        if result == 0 {
+            DeleteObject(curve);
+            std::ptr::null_mut()
+        } else {
+            curve
+        }
     }
 }
 
@@ -197,6 +213,42 @@ fn clip(window: &tauri::WebviewWindow) -> Result<(), String> {
 #[cfg(all(test, windows))]
 mod tests {
     #[test]
+    fn native_guard_preserves_css_antialiasing_coverage_in_all_corners() {
+        use windows_sys::Win32::Graphics::Gdi::{DeleteObject, PtInRegion};
+        for radius in [2, 6, 12, 24, 36, 48] {
+            let (width, height) = (900, 640);
+            unsafe {
+                let region = super::rounded_region(width, height, radius);
+                let mut clipped = Vec::new();
+                for x in 0..radius {
+                    for y in 0..radius {
+                        let dx = x as f64 + 0.5 - radius as f64;
+                        let dy = y as f64 + 0.5 - radius as f64;
+                        // Include the partially covered CSS edge, not just fully opaque pixels.
+                        if dx.hypot(dy) <= radius as f64 + 0.75 {
+                            for (cx, cy) in [
+                                (x, y),
+                                (width - 1 - x, y),
+                                (x, height - 1 - y),
+                                (width - 1 - x, height - 1 - y),
+                            ] {
+                                if PtInRegion(region, cx, cy) == 0 {
+                                    clipped.push((cx, cy));
+                                }
+                            }
+                        }
+                    }
+                }
+                DeleteObject(region);
+                assert!(
+                    clipped.is_empty(),
+                    "radius={radius}, clipped CSS edge pixels: {clipped:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn native_region_matches_window_bounds_and_excludes_only_rounded_corners() {
         use windows_sys::Win32::Graphics::Gdi::{DeleteObject, GetRgnBox, PtInRegion};
         for (width, height, radius) in [
@@ -222,7 +274,7 @@ mod tests {
                 DeleteObject(region);
                 assert_eq!(actual, (0, 0, width, height), "radius={radius}");
                 assert!(center);
-                assert_eq!(corners, [radius == 0; 4]);
+                assert_eq!(corners, [radius < 8; 4]);
             }
         }
     }
@@ -236,26 +288,20 @@ pub fn setup(window: &tauri::WebviewWindow) {
         }
         let _ = window.set_theme(Some(tauri::Theme::Dark));
         after_show(window);
-        // Windows 11's SYSTEMBACKDROP_TYPE covers the entire HWND rectangle.
-        // A valid GDI region alone does not prove this compositor material is clipped.
-        // Explicitly clear it, then use the accent blur path for our custom radius.
+        // Neither System Backdrop nor Accent Blur clipped reliably on the user's
+        // desktop. Keep the native surface transparent; draw the glass face in CSS.
         if let Err(error) = window_vibrancy::clear_acrylic(window) {
             crate::diagnostics::record("窗口", "清除矩形材质", None, error.to_string());
         }
-        match window_vibrancy::apply_blur(window, Some((18, 22, 38, 135))) {
-            Ok(()) => crate::diagnostics::record(
-                "窗口",
-                "玻璃材质",
-                None,
-                "已禁用矩形 System Backdrop，启用原生 Accent Blur 圆角兼容路径",
-            ),
-            Err(error) => crate::diagnostics::record(
-                "窗口",
-                "玻璃材质",
-                None,
-                format!("使用深色玻璃回退：{error}"),
-            ),
+        if let Err(error) = window_vibrancy::clear_blur(window) {
+            crate::diagnostics::record("窗口", "清除 Accent Blur", None, error.to_string());
         }
+        crate::diagnostics::record(
+            "窗口",
+            "玻璃材质",
+            None,
+            "原生背景透明；已关闭 System Backdrop 和 Accent Blur，使用 CSS 玻璃表面",
+        );
         if let Err(error) = clip(window) {
             crate::diagnostics::record("窗口", "圆角裁切", None, error);
         }
