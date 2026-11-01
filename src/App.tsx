@@ -683,6 +683,7 @@ function App() {
                 onMouseEnter={() => setSelectedIndex(idx)}
                 aria-description={`${app.path}${app.arguments ? `，${app.arguments}` : ""}。单击启动，右键操作菜单，当前分类：${app.category}`}
               >
+                {config?.pinned_apps?.includes(app.id) && <span className="app-pin-corner" aria-hidden="true"><UiIcon name="star"/></span>}
                 <div className="app-icon">
                   {app.icon ? (
                     <img src={app.icon} alt={app.name} />
@@ -691,7 +692,6 @@ function App() {
                       {app.name.charAt(0).toUpperCase()}
                     </div>
                   )}
-                  {config?.pinned_apps?.includes(app.id) && <span className="app-pin-corner" aria-hidden="true"><UiIcon name="star"/></span>}
                 </div>
                 <span className="app-name">{app.name}</span>
               </div>
