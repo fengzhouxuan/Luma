@@ -11,10 +11,10 @@ export function ManagementTools({ onAdd, onPreview }: Props) {
   const run = async (action: () => Promise<void>) => { setBusy(true); setMessage(""); try { await action(); } catch (error) { setMessage(String(error)); } finally { setBusy(false); } };
   return <>
     <div className="settings-section"><div className="settings-label">应用与配置</div>
-      <div className="panel-actions"><button className="btn" disabled={busy} onClick={onAdd}>添加应用</button>
+      <div className="panel-actions"><button className="btn" disabled={busy} onClick={onAdd}>添加快捷入口</button>
         <button className="btn" disabled={busy} onClick={() => void run(async () => { const path = await invoke<string | null>("export_config_backup"); if (path) setMessage(`已导出：${path}`); })}>导出配置</button>
         <button className="btn" disabled={busy} onClick={() => void run(async () => { const preview = await invoke<BackupPreview | null>("preview_config_import"); if (preview) onPreview(preview); })}>导入配置</button></div>
-      <p className="settings-hint">支持 EXE、快捷方式或拖入文件。备份包括分类、置顶、隐藏、别名、启动设置、手动应用及扫描目录；保留本机快捷键、自启和窗口位置。</p>
+      <p className="settings-hint">支持应用、文件夹、网页和脚本；本机目标也可直接拖入。备份包括分类、固定栏、隐藏、别名、快捷入口及扫描目录；保留本机快捷键、自启和窗口位置。</p>
     </div>
     <div className="settings-section"><div className="settings-label">应用更新</div><div className="panel-actions">
       <button className="btn" disabled={busy} onClick={() => void run(async () => setUpdate(await invoke<UpdateInfo>("check_update")))}>{busy ? "处理中…" : "检查更新"}</button>
@@ -30,7 +30,7 @@ export function ManagementTools({ onAdd, onPreview }: Props) {
 export function ImportPreview({ preview, onClose, onImported }: { preview: BackupPreview; onClose: () => void; onImported: (config: Config) => void }) {
   const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
   return <Dialog title="确认导入配置" label="取消导入" className="editor-panel" busy={busy} onClose={onClose}>
-    <p>手动应用 {preview.manual_apps} · 搜索别名 {preview.aliases} · 分类 {preview.categories}</p><p>固定应用 {preview.pinned} · 隐藏 {preview.hidden} · 扫描目录 {preview.directories}</p>
+    <p>快捷入口 {preview.manual_apps} · 搜索别名 {preview.aliases} · 分类 {preview.categories}</p><p>固定应用 {preview.pinned} · 隐藏 {preview.hidden} · 扫描目录 {preview.directories}</p>
     <p className="settings-hint">导入将替换上述个人配置。当前配置会先自动备份；本机快捷键、自启和显示器位置保留。</p>
     {preview.missing.length > 0 && <details open><summary>{preview.missing.length} 个路径在本机不存在，导入后可修正</summary><pre className="path-list">{preview.missing.join("\n")}</pre></details>}
     {error && <p className="form-error" role="alert">{error}</p>}

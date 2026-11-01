@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
-type Name = "search" | "plus" | "close" | "star" | "info" | "refresh" | "settings" | "grid" | "game" | "office" | "code" | "media" | "chat" | "browser" | "other";
+type Name = "folder" | "search" | "plus" | "close" | "star" | "info" | "refresh" | "settings" | "grid" | "game" | "office" | "code" | "media" | "chat" | "browser" | "other";
 const paths: Record<Name, ReactNode> = {
+  folder: <path d="M3 7V5a2 2 0 0 1 2-2h5l3 4h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/>,
   search: <><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></>,
   plus: <path d="M12 5v14M5 12h14"/>,
   close: <path d="m6 6 12 12M6 18 18 6"/>,

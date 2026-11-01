@@ -1,6 +1,6 @@
 use crate::{
     config::{self, Appearance, Config, Usage},
-    personal::{LaunchOverride, ManualApp},
+    personal::{self, LaunchOverride, ManualApp},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -48,7 +48,7 @@ pub struct Preview {
 fn from_config(cfg: &Config) -> Backup {
     Backup {
         format: "luma-config".into(),
-        version: 1,
+        version: 2,
         preferences: Preferences {
             appearance: Some(cfg.appearance.clone()),
             show_all: cfg.show_all,
@@ -70,7 +70,7 @@ fn parse(json: &str) -> Result<Backup, String> {
         return Err("备份文件不能超过 2MB".into());
     }
     let mut data: Backup = serde_json::from_str(json).map_err(|e| format!("备份格式无效：{e}"))?;
-    if data.format != "luma-config" || data.version != 1 {
+    if data.format != "luma-config" || !matches!(data.version, 1 | 2) {
         return Err("不支持的备份类型或版本".into());
     }
     let p = &mut data.preferences;
@@ -200,7 +200,7 @@ pub async fn preview_config_import(app: tauri::AppHandle) -> Result<Option<Previ
         let missing: Vec<_> = p
             .manual_apps
             .iter()
-            .filter(|item| !Path::new(&item.path).is_file())
+            .filter(|item| personal::is_missing(item))
             .map(|item| item.path.clone())
             .chain(
                 p.extra_dirs
@@ -249,6 +249,35 @@ pub fn import_config_backup(json: String, app: tauri::AppHandle) -> Result<Confi
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn old_backup_imports_and_new_entry_kinds_round_trip() {
+        let old = r#"{"format":"luma-config","version":1,"preferences":{"manual_apps":[{"id":"manual-old","name":"旧应用","path":"C:\\old.exe","arguments":"","working_dir":null}]}}"#;
+        let mut cfg = Config::default();
+        apply(&mut cfg, parse(old).unwrap().preferences);
+        assert_eq!(cfg.manual_apps[0].kind, crate::model::EntryKind::App);
+        let mut web = cfg.manual_apps[0].clone();
+        web.id = "manual-web".into();
+        web.kind = crate::model::EntryKind::Web;
+        web.path = "https://example.com".into();
+        let mut folder = web.clone();
+        folder.id = "manual-folder".into();
+        folder.kind = crate::model::EntryKind::Folder;
+        folder.path = r"Z:\missing-folder".into();
+        cfg.manual_apps.extend([web, folder]);
+        cfg.pinned_apps = vec!["manual-folder".into(), "manual-web".into()];
+        let data = from_config(&cfg);
+        assert_eq!(data.version, 2);
+        let restored = parse(&serde_json::to_string(&data).unwrap()).unwrap();
+        assert_eq!(
+            restored.preferences.manual_apps[1].kind,
+            crate::model::EntryKind::Web
+        );
+        assert_eq!(
+            restored.preferences.manual_apps[2].kind,
+            crate::model::EntryKind::Folder
+        );
+        assert_eq!(restored.preferences.pinned_apps, cfg.pinned_apps);
+    }
     #[test]
     fn rejects_unknown_versions_and_invalid_launch_inputs_before_changes() {
         assert!(parse(r#"{"format":"luma-config","version":99,"preferences":{}}"#).is_err());

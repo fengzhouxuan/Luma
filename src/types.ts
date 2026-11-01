@@ -1,4 +1,6 @@
+export type EntryKind = "app" | "folder" | "web" | "script";
 export interface AppEntry {
+  kind?: EntryKind;
   id: string;
   name: string;
   path: string;
@@ -14,7 +16,7 @@ export interface AppEntry {
 
 export interface HotkeyConfig { mode: "combo"; modifiers: string[]; key: string }
 export interface Usage { count: number; last_launch: number }
-export interface ManualApp { id: string; name: string; path: string; arguments: string; working_dir: string | null; shortcut_path: string | null }
+export interface ManualApp { kind?: EntryKind; id: string; name: string; path: string; arguments: string; working_dir: string | null; shortcut_path: string | null }
 export interface LaunchOverride { arguments: string; working_dir: string | null }
 export interface AutostartStatus { enabled: boolean; legacy: boolean; command: string | null }
 export interface BackupPreview { json: string; manual_apps: number; aliases: number; categories: number; pinned: number; hidden: number; directories: number; missing: string[] }

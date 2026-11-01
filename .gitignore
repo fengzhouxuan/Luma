@@ -14,6 +14,7 @@ dist-ssr
 
 # Rust / Tauri build output
 src-tauri/target
+/target
 src-tauri/gen
 
 # 图标调试中间产物（AI 原图 + 去水印/检查的临时图）

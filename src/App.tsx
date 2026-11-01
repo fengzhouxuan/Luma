@@ -6,6 +6,7 @@ import { rankApps } from "./search";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
 import { AppEditor, type EditorTarget } from "./AppEditor";
 import { AppMenu } from "./AppMenu";
+import { EntryIcon } from "./EntryIcon";
 import { UiIcon, CategoryIcon } from "./UiIcon";
 import { Dialog } from "./Dialog";
 import { useOverlayFocus } from "./overlayFocus";
@@ -47,6 +48,11 @@ function App() {
   const [autostart, setAutostart] = useState<AutostartStatus | null>(null);
   const [autostartBusy, setAutostartBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(""), 6000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
   const [capturing, setCapturing] = useState(false);
   const [hotkeyDraft, setHotkeyDraft] = useState<HotkeyConfig | null>(null);
   const [extraDirDraft, setExtraDirDraft] = useState("");
@@ -70,6 +76,7 @@ function App() {
   const flushAppearance = () => { void appearanceWriter.current?.flush(); };
   const gridRef = useRef<HTMLDivElement>(null);
   const dockRef = useRef<HTMLDivElement>(null);
+  const categoriesRef = useRef<HTMLDivElement>(null);
   const pinQueue = useRef<Promise<void>>(Promise.resolve());
   const mutatePins = (command: string, args: Record<string, unknown>) => {
     const job = pinQueue.current.then(async () => {
@@ -80,7 +87,11 @@ function App() {
     return pinQueue.current;
   };
   const placePinned = (app: AppEntry, beforeId: string | null) => { void mutatePins("place_pinned_app", { appId: app.id, beforeId }); };
-  const appDrag = useAppDrag(dockRef, placePinned);
+  const appDrag = useAppDrag(dockRef, categoriesRef, placePinned, (app, category) => {
+    void setAppCategory(app.id, category).then(saved => {
+      if (saved) setNotice(category ? `已将「${app.name}」移到「${category}」` : `「${app.name}」已恢复自动分类`);
+    });
+  });
   const dragging = !!appDrag.drag;
   const scanInFlight = useRef<Promise<void> | null>(null);
   const scanPending = useRef(false);
@@ -108,7 +119,7 @@ function App() {
     let disposed = false; let stop: (() => void) | undefined;
     void getCurrentWindow().onDragDropEvent(({ payload }) => {
       if (payload.type !== "drop" || disposed) return;
-      if (payload.paths.length !== 1) { setNotice("请每次拖入一个 EXE、快捷方式或 ClickOnce 文件"); return; }
+      if (payload.paths.length !== 1) { setNotice("请每次拖入一个应用、文件夹或脚本"); return; }
       void invoke<ManualApp>("prepare_manual_app", { path: payload.paths[0] }).then(manual => {
         if (!disposed) { setSettingsOpen(false); setDiagnosticsOpen(false); setEditor({ manual }); }
       }).catch(error => { if (!disposed) setNotice(String(error)); });
@@ -117,10 +128,8 @@ function App() {
   }, []);
 
   const addManualApp = async () => {
-    try {
-      const manual = await invoke<ManualApp | null>("pick_manual_app");
-      if (manual) { setSettingsOpen(false); setDiagnosticsOpen(false); setEditor({ manual }); }
-    } catch (error) { setNotice(String(error)); }
+    setSettingsOpen(false); setDiagnosticsOpen(false);
+    setEditor({ manual: { kind: "app", id: `manual-${crypto.randomUUID()}`, name: "", path: "", arguments: "", working_dir: null, shortcut_path: null } });
   };
   const personalSaved = (next: Config) => { setConfig(next); setEditor(null); setPreview(null); void scan(false, true); };
 
@@ -301,9 +310,11 @@ function App() {
         appCategories[appId] = category;
         return { ...c, app_categories: appCategories };
       });
+      return true;
     } catch (e) {
       console.error("设置分类失败", e);
-      alert(`设置分类失败: ${e}`);
+      setNotice(`设置分类失败: ${e}`);
+      return false;
     }
   };
 
@@ -497,7 +508,7 @@ function App() {
     setSelectedId(filtered[index]?.id ?? null);
   };
 
-  const iconTargets = JSON.stringify([...dockApps, ...filtered].map(({ path, shortcut_path }) => ({ path, shortcut_path })));
+  const iconTargets = JSON.stringify([...dockApps, ...filtered].filter(app => !app.kind || app.kind === "app").map(({ path, shortcut_path }) => ({ path, shortcut_path })));
   useEffect(() => {
     const loader = iconLoader.current;
     const grid = gridRef.current;
@@ -598,7 +609,7 @@ function App() {
           autoFocus
         />
         </div>
-        <button className="settings-btn" title="添加应用" aria-label="添加应用" onClick={() => void addManualApp()}><UiIcon name="plus"/></button>
+        <button className="settings-btn" title="添加快捷入口" aria-label="添加快捷入口" onClick={() => void addManualApp()}><UiIcon name="plus"/></button>
         <button
           className={`settings-btn refresh-btn${refreshing ? " refreshing" : ""}`}
           onClick={() => void scan(true)}
@@ -623,11 +634,12 @@ function App() {
 
       <div className="main-area">
         {/* 分类侧边栏 */}
-        <div className="category-sidebar">
+        <div className="category-sidebar" ref={categoriesRef}>
           {categories.map((cat) => (
             <div
               key={cat}
-              className={`category-item${cat === activeCategory ? " active" : ""}`}
+              className={`category-item${cat === activeCategory ? " active" : ""}${appDrag.drag?.overCategory === (cat === "全部" ? "" : cat) ? " drop-active" : ""}`}
+              data-drop-category={cat === "全部" ? "" : cat}
               onClick={() => {
                 setActiveCategory(cat);
                 setQuery("");
@@ -727,13 +739,7 @@ function App() {
               >
                 {config?.pinned_apps?.includes(app.id) && <span className="app-pin-corner" aria-hidden="true"><UiIcon name="star"/></span>}
                 <div className="app-icon">
-                  {app.icon ? (
-                    <img src={app.icon} alt={app.name} draggable={false}/>
-                  ) : (
-                    <div className="app-icon-fallback">
-                      {app.name.charAt(0).toUpperCase()}
-                    </div>
-                  )}
+                  <EntryIcon app={app}/>
                 </div>
                 <span className="app-name">{app.name}</span>
               </div>
@@ -768,8 +774,8 @@ function App() {
 
       </div>
       {appDrag.drag && <div className="app-drag-ghost" aria-hidden="true" style={{ left: Math.min(appDrag.drag.x + 14, window.innerWidth - 210), top: Math.min(appDrag.drag.y + 14, window.innerHeight - 64) }}>
-        {appDrag.drag.app.icon ? <img src={appDrag.drag.app.icon} alt=""/> : <UiIcon name="star"/>}
-        <span>{appDrag.drag.app.name}<small>{appDrag.drag.overDock ? "松开固定到此处" : "拖到上方固定栏"}</small></span>
+        <EntryIcon app={appDrag.drag.app}/>
+        <span>{appDrag.drag.app.name}<small>{appDrag.drag.overCategory !== null ? (appDrag.drag.overCategory ? `松开移到「${appDrag.drag.overCategory}」` : "松开恢复自动分类") : appDrag.drag.overDock ? "松开固定到此处" : "拖到分类或上方固定栏"}</small></span>
       </div>}
       {/* 设置面板 */}
       {settingsOpen && config && (
@@ -1012,7 +1018,7 @@ function App() {
         onEdit={() => { setEditor({ app: menu.app }); setMenu(null); }} onDetails={() => { openDiagnostics(menu.app.id); setMenu(null); }}
         onLaunch={admin => { void launch(menu.app, admin); setMenu(null); }} onPin={() => { void togglePinned(menu.app); setMenu(null); }}
         onHide={() => { void toggleHidden(menu.app); setMenu(null); }} onMessage={setNotice}/>}
-      {notice && <div className="toast" role="status"><span>{notice}</span><button aria-label="关闭提示" onClick={() => setNotice("")}><UiIcon name="close"/></button></div>}
+      {notice && !editor && !preview && !menu && <div className="toast" role="status"><span>{notice}</span><button aria-label="关闭提示" onClick={() => setNotice("")}><UiIcon name="close"/></button></div>}
     </div>
   );
 }

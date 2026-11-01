@@ -237,10 +237,22 @@ pub fn set_extra_dirs(dirs: Vec<String>) -> Result<(), String> {
 /// 手动设置某个应用的分类（覆盖自动分类）
 #[tauri::command]
 pub fn set_app_category(app_id: String, category: String) -> Result<(), String> {
+    let cfg = get();
+    validate_category(&category, &cfg.custom_categories)?;
     // 空值明确表示使用自动分类，并覆盖旧版按名称保存的映射。
     update(|cfg| {
         cfg.app_categories.insert(app_id, category);
     })
+}
+
+fn validate_category(category: &str, custom: &[String]) -> Result<(), String> {
+    if ["", "游戏", "办公", "开发", "媒体", "社交", "浏览器", "其他"].contains(&category)
+        || custom.iter().any(|name| name == category)
+    {
+        Ok(())
+    } else {
+        Err("分类已不存在，请重新选择".into())
+    }
 }
 
 /// 添加自定义分类
@@ -333,6 +345,14 @@ fn increment_usage(cfg: &mut Config, id: &str, now: u64) -> Usage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn category_drop_accepts_builtin_custom_and_auto_but_rejects_stale_targets() {
+        assert!(validate_category("", &[]).is_ok());
+        assert!(validate_category("办公", &[]).is_ok());
+        assert!(validate_category("常用", &["常用".into()]).is_ok());
+        assert!(validate_category("已删除", &[]).is_err());
+        assert!(validate_category("全部", &[]).is_err());
+    }
     #[test]
     fn placing_pins_adds_moves_and_keeps_other_entries_in_order() {
         let mut pins = vec!["a".into(), "missing".into(), "b".into(), "c".into()];

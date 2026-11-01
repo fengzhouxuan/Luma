@@ -1,4 +1,7 @@
-use crate::{catalog, config, diagnostics, model::AppEntry};
+use crate::{
+    catalog, config, diagnostics,
+    model::{AppEntry, EntryKind},
+};
 use serde::Serialize;
 use std::path::Path;
 
@@ -32,6 +35,22 @@ pub async fn launch_app(app_id: String, admin: bool) -> Result<LaunchResult, Str
 }
 
 pub fn launch_entry(app: &AppEntry, admin: bool) -> Result<(), String> {
+    if app.kind != EntryKind::App {
+        crate::personal::validate_target(app.kind, &app.path, true)?;
+        if matches!(app.kind, EntryKind::Folder | EntryKind::Web) {
+            if admin {
+                return Err("文件夹和网页不支持以管理员身份启动".into());
+            }
+            return shell_execute(&app.path, "", None, false);
+        }
+        let (program, arguments) = script_command(&app.path, &app.arguments)?;
+        let directory = app
+            .working_dir
+            .as_deref()
+            .filter(|dir| Path::new(dir).is_dir())
+            .or_else(|| Path::new(&app.path).parent().and_then(|dir| dir.to_str()));
+        return shell_execute(&program, &arguments, directory, admin);
+    }
     #[cfg(windows)]
     if let Some(id) = crate::packaged::app_id(&app.path) {
         if admin {
@@ -88,6 +107,29 @@ pub fn launch_entry(app: &AppEntry, admin: bool) -> Result<(), String> {
     shell_execute(&app.path, &app.arguments, directory.as_deref(), admin)
 }
 
+fn script_command(path: &str, arguments: &str) -> Result<(String, String), String> {
+    crate::personal::validate_target(EntryKind::Script, path, false)?;
+    let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+    if Path::new(path)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("ps1"))
+    {
+        Ok((
+            format!(r"{root}\System32\WindowsPowerShell\v1.0\powershell.exe"),
+            format!("-NoProfile -File \"{path}\" {arguments}"),
+        ))
+    } else {
+        // CMD expands percent signs even inside quoted filenames. Reject ambiguous targets.
+        if path.contains('%') {
+            return Err("BAT/CMD 脚本路径不能包含 %，请更换路径后重试".into());
+        }
+        Ok((
+            format!(r"{root}\System32\cmd.exe"),
+            format!("/D /V:OFF /S /C \"\"{path}\" {arguments}\""),
+        ))
+    }
+}
+
 #[cfg(windows)]
 fn shell_execute(
     path: &str,
@@ -141,6 +183,52 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn script_interpreters_preserve_quoted_paths_and_use_system_policy() {
+        use std::os::windows::process::CommandExt;
+        let (powershell, args) =
+            script_command(r"C:\测试 目录\run.ps1", "\"hello world\"").unwrap();
+        assert!(powershell.ends_with(r"WindowsPowerShell\v1.0\powershell.exe"));
+        assert_eq!(
+            args,
+            "-NoProfile -File \"C:\\测试 目录\\run.ps1\" \"hello world\""
+        );
+        assert!(!args.to_lowercase().contains("executionpolicy"));
+        let dir = std::env::temp_dir().join(format!(
+            "luma-script 测试 & !-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let script = dir.join("test & run!.cmd");
+        std::fs::write(dir.join("cwd-marker"), "fixture").unwrap();
+        std::fs::write(
+            &script,
+            "@echo off\r\nif not exist cwd-marker exit /b 5\r\n>result.txt echo %~1\r\n",
+        )
+        .unwrap();
+        let (cmd, args) = script_command(script.to_str().unwrap(), "\"hello world\"").unwrap();
+        let status = std::process::Command::new(cmd)
+            .raw_arg(args)
+            .current_dir(&dir)
+            .creation_flags(0x08000000)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("result.txt"))
+                .unwrap()
+                .trim(),
+            "hello world"
+        );
+        for file in ["cwd-marker", "test & run!.cmd", "result.txt"] {
+            std::fs::remove_file(dir.join(file)).unwrap();
+        }
+        std::fs::remove_dir(dir).unwrap();
+    }
 
     #[test]
     fn shortcut_and_direct_fallback_preserve_unicode_arguments_and_working_directory() {

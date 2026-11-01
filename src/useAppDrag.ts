@@ -2,15 +2,17 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, ty
 import type { AppEntry } from "./types";
 import { insertionBefore } from "./dock";
 
-export interface AppDrag { app: AppEntry; x: number; y: number; overDock: boolean; beforeId: string | null }
+export interface AppDrag { app: AppEntry; x: number; y: number; overDock: boolean; beforeId: string | null; overCategory: string | null }
 
 // Pointer dragging leaves Tauri's native file-drop support enabled on Windows.
-export function useAppDrag(dock: RefObject<HTMLDivElement | null>, drop: (app: AppEntry, beforeId: string | null) => void) {
+export function useAppDrag(dock: RefObject<HTMLDivElement | null>, categories: RefObject<HTMLDivElement | null>, drop: (app: AppEntry, beforeId: string | null) => void, categorize: (app: AppEntry, category: string) => void) {
   const [drag, setDrag] = useState<AppDrag | null>(null);
   const pending = useRef<{ app: AppEntry; x: number; y: number; pointer: number; source: HTMLElement; active: boolean } | null>(null);
   const suppressed = useRef(false);
   const onDrop = useRef(drop);
   onDrop.current = drop;
+  const onCategory = useRef(categorize);
+  onCategory.current = categorize;
   useEffect(() => {
     const locate = (x: number, y: number, id: string) => {
       const node = dock.current;
@@ -24,7 +26,18 @@ export function useAppDrag(dock: RefObject<HTMLDivElement | null>, drop: (app: A
         const bounds = item.getBoundingClientRect();
         return { id: item.dataset.dockApp!, center: bounds.left + bounds.width / 2 };
       });
-      return { overDock, beforeId: insertionBefore(items, x, id) };
+      const sidebar = categories.current;
+      const bounds = sidebar?.getBoundingClientRect();
+      let overCategory: string | null = null;
+      if (sidebar && bounds && x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom) {
+        if (y < bounds.top + 24) sidebar.scrollTop -= 10;
+        else if (y > bounds.bottom - 24) sidebar.scrollTop += 10;
+        for (const item of sidebar.querySelectorAll<HTMLElement>('[data-drop-category]')) {
+          const box = item.getBoundingClientRect();
+          if (x >= box.left && x <= box.right && y >= box.top && y <= box.bottom) { overCategory = item.dataset.dropCategory!; break; }
+        }
+      }
+      return { overDock, beforeId: insertionBefore(items, x, id), overCategory };
     };
     const cancel = () => {
       const item = pending.current;
@@ -52,7 +65,8 @@ export function useAppDrag(dock: RefObject<HTMLDivElement | null>, drop: (app: A
       if (item.active) {
         event.preventDefault();
         const target = locate(event.clientX, event.clientY, item.app.id);
-        if (target.overDock) onDrop.current(item.app, target.beforeId);
+        if (target.overCategory !== null) onCategory.current(item.app, target.overCategory);
+        else if (target.overDock) onDrop.current(item.app, target.beforeId);
       }
       cancel();
     };
@@ -74,7 +88,7 @@ export function useAppDrag(dock: RefObject<HTMLDivElement | null>, drop: (app: A
       window.removeEventListener('keydown', escape, true);
       window.removeEventListener('pointerdown', resetClick, true);
     };
-  }, [dock]);
+  }, [dock, categories]);
   return {
     drag,
     start: (event: ReactPointerEvent<HTMLElement>, app: AppEntry) => {

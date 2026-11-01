@@ -13,7 +13,7 @@ export function AppMenu({ app, config, x, y, onClose, onEdit, onDetails, onLaunc
     menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - rect.height - 8))}px`;
   }, [x, y]);
   const action = async (command: string) => { try { await invoke(command, { appId: app.id }); onMessage(command === "copy_app_path" ? "已复制应用路径" : "已打开所在目录"); } catch (error) { onMessage(String(error)); } onClose(); };
-  const managed = /^shell:|^::\{|:\/\//i.test(app.path);
+  const managed = app.kind === "folder" || /^shell:|^::\{|:\/\//i.test(app.path);
   return <div className="menu-layer" onClick={onClose} onContextMenu={event => { event.preventDefault(); onClose(); }}>
     <section ref={ref} data-focus-scope tabIndex={-1} className="app-menu" role="menu" aria-label={`${app.name} 操作`} style={{ left: x, top: y }} onClick={event => event.stopPropagation()}
       onKeyDown={event => {
@@ -28,8 +28,8 @@ export function AppMenu({ app, config, x, y, onClose, onEdit, onDetails, onLaunc
       <strong>{app.name}</strong><button role="menuitem" onClick={() => onLaunch(false)}>启动应用</button>
       <button role="menuitem" disabled={managed} onClick={() => onLaunch(true)}>以管理员身份启动</button>
       <button role="menuitem" onClick={onEdit}>别名与启动设置</button>
-      <button role="menuitem" onClick={() => void action("reveal_app")}>打开所在目录</button>
-      <button role="menuitem" onClick={() => void action("copy_app_path")}>复制应用路径</button>
+      <button role="menuitem" disabled={app.kind === "web"} onClick={() => void action("reveal_app")}>打开所在目录</button>
+      <button role="menuitem" onClick={() => void action("copy_app_path")}>{app.kind === "web" ? "复制链接" : "复制应用路径"}</button>
       <button role="menuitem" onClick={onPin}>{config?.pinned_apps?.includes(app.id) ? "从应用栏取消固定" : "固定到应用栏"}</button>
       <button role="menuitem" onClick={onHide}>{config?.hidden_apps?.includes(app.id) ? "取消手动隐藏" : "手动隐藏"}</button>
       <button role="menuitem" onClick={onDetails}>查看应用详情</button>

@@ -2,6 +2,7 @@ import { useEffect, type PointerEvent, type RefObject } from "react";
 import { iconKey } from "./iconLoader";
 import { adjacentBefore } from "./dock";
 import { UiIcon } from "./UiIcon";
+import { EntryIcon } from "./EntryIcon";
 import type { AppDrag } from "./useAppDrag";
 import type { AppEntry } from "./types";
 
@@ -50,11 +51,11 @@ export function FixedBar({ apps, listRef, drag, onLaunch, onMenu, onPlace, onDra
               buttons[next]?.focus(); buttons[next]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
             }
           }}>
-          {app.icon ? <img src={app.icon} alt="" draggable={false}/> : <span className="fixed-fallback">{app.name.charAt(0).toUpperCase()}</span>}
+          <EntryIcon app={app}/>
         </button>
       </div>)}
       {drag?.overDock && !drag.beforeId && <span className="fixed-insertion at-end"/>}
     </div>
-    {drag && <span className="fixed-drop-hint">松开固定</span>}
+    {drag?.overDock && <span className="fixed-drop-hint">松开固定</span>}
   </section>;
 }

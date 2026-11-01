@@ -1,8 +1,19 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EntryKind {
+    #[default]
+    App,
+    Folder,
+    Web,
+    Script,
+}
 
 #[derive(Serialize, Clone, Debug)]
 pub struct AppEntry {
+    pub kind: EntryKind,
     pub id: String,
     pub name: String,
     pub path: String,
@@ -28,6 +39,7 @@ pub fn identity(path: &str, arguments: &str) -> String {
 impl AppEntry {
     pub fn new(name: String, path: String, source: &str, source_path: String) -> Self {
         Self {
+            kind: EntryKind::App,
             id: identity(&path, ""),
             hidden_reason: crate::classify_noise(&name, &path),
             category: crate::auto_category(&name, &path),
