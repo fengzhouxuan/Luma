@@ -225,7 +225,7 @@ pub async fn preview_config_import(app: tauri::AppHandle) -> Result<Option<Previ
 }
 
 #[tauri::command]
-pub fn import_config_backup(json: String) -> Result<Config, String> {
+pub fn import_config_backup(json: String, app: tauri::AppHandle) -> Result<Config, String> {
     let data = parse(&json)?;
     let dir = std::path::PathBuf::from(std::env::var_os("APPDATA").ok_or("无法定位配置目录")?)
         .join("Luma")
@@ -240,6 +240,7 @@ pub fn import_config_backup(json: String) -> Result<Config, String> {
         serde_json::to_vec_pretty(&from_config(&config::get())).map_err(|e| e.to_string())?;
     std::fs::write(path, previous).map_err(|e| format!("保存导入前备份失败：{e}"))?;
     config::update(|cfg| apply(cfg, data.preferences))?;
+    crate::appearance::refresh(&app);
     crate::catalog::invalidate(2);
     crate::catalog::preferences_changed();
     Ok(config::get())

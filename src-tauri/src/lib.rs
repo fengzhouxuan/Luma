@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+mod appearance;
 mod autostart;
 mod backup;
 mod catalog;
@@ -964,6 +965,7 @@ pub fn run() {
                     if let Ok(hwnd) = window.hwnd() {
                         disable_window_corner_and_shadow(hwnd.0 as isize);
                     }
+                    appearance::setup(&window);
 
                     // 失焦自动隐藏（保持后台常驻，不退出）
                     // 采用"延迟二次确认"：收到失焦后延迟 200ms 再检查是否仍失焦，

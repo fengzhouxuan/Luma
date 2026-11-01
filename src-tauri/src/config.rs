@@ -1,7 +1,7 @@
 //! Luma 配置存储层
 //!
 //! 配置文件位于 `%APPDATA%\Luma\config.json`，以 JSON 存储。
-//! 注意：Luma 以管理员权限运行，写入 APPDATA 时需确保路径权限正确。
+//! 自启和个人配置使用当前用户目录。
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -78,7 +78,7 @@ impl Default for Config {
             autostart: false,
             appearance: Appearance {
                 opacity: 0.8,
-                corner_radius: 12.0,
+                corner_radius: 24.0,
             },
             show_all: false,
             extra_dirs: Vec::new(),
@@ -186,12 +186,13 @@ pub fn get_config() -> Config {
 }
 
 #[tauri::command]
-pub fn set_config(cfg: Config) -> Result<(), String> {
+pub fn set_config(cfg: Config, app: tauri::AppHandle) -> Result<(), String> {
     // 外观和热键保存不能覆盖同时更新的置顶、分类或使用记录。
     update(|current| {
         current.hotkey = cfg.hotkey.clone();
         current.appearance = cfg.appearance.clone();
     })?;
+    crate::appearance::refresh(&app);
 
     // 快捷键变更后重新注册系统热键
     #[cfg(windows)]

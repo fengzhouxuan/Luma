@@ -53,6 +53,7 @@ pub fn show(app: &tauri::AppHandle) {
         if let Ok(hwnd) = window.hwnd() {
             crate::force_foreground(hwnd.0 as isize);
         }
+        crate::appearance::after_show(&window);
     }
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "luma"
-version = "1.5.0"
+version = "1.6.0"
 description = "Luma — a lightweight macOS-style app launcher for Windows"
 authors = ["fengzhouxuan"]
 edition = "2024"
@@ -36,6 +36,7 @@ base64 = "0.23"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(windows)'.dependencies]
+window-vibrancy = "0.8"
 webview2-com = "0.39.1"
 windows = { version = "0.62.2", features = ["Win32_System_Com", "Win32_System_SystemServices", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_Shell_PropertiesSystem", "Win32_Graphics_Gdi"] }
 windows-sys = { version = "0.59", features = [

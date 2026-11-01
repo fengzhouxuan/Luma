@@ -2164,7 +2164,7 @@ checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
 
 [[package]]
 name = "luma"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "base64 0.23.1",
  "glob",
@@ -2182,6 +2182,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
  "webview2-com",
+ "window-vibrancy",
  "windows",
  "windows-icons",
  "windows-sys 0.59.0",

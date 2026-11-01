@@ -6,6 +6,7 @@ import { rankApps } from "./search";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
 import { AppEditor, type EditorTarget } from "./AppEditor";
 import { AppMenu } from "./AppMenu";
+import { UiIcon, CategoryIcon } from "./UiIcon";
 import { ManagementTools, ImportPreview } from "./ManagementTools";
 import type { AppEntry, Config, HotkeyConfig, Usage, ScanResult, Diagnostics, ManualApp, AutostartStatus, BackupPreview } from "./types";
 import { IconLoader, iconKey, type IconTarget } from "./iconLoader";
@@ -525,15 +526,19 @@ function App() {
     <div className="launchpad" onKeyDown={handleKeyDown}>
       <div className="search-bar" data-tauri-drag-region>
         <button type="button" className="window-drag-handle" aria-label="拖动窗口" title="按住拖动窗口" data-tauri-drag-region />
+        <span className="app-wordmark" aria-hidden="true" data-tauri-drag-region>Luma</span>
+        <div className="search-input-wrap"><UiIcon name="search"/>
         <input
           ref={inputRef}
           type="text"
-          placeholder="搜索应用（支持拼音）..."
+          placeholder="搜索应用、拼音或别名"
+          aria-label="搜索应用"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           autoFocus
         />
-        <button className="settings-btn" title="添加应用" aria-label="添加应用" onClick={() => void addManualApp()}>＋</button>
+        </div>
+        <button className="settings-btn" title="添加应用" aria-label="添加应用" onClick={() => void addManualApp()}><UiIcon name="plus"/></button>
         <button
           className={`settings-btn refresh-btn${refreshing ? " refreshing" : ""}`}
           onClick={() => void scan(true)}
@@ -541,14 +546,15 @@ function App() {
           aria-label={refreshing ? "正在扫描应用" : "刷新应用"}
           title={scanError ?? (refreshing ? "正在扫描应用" : "刷新应用")}
         >
-          <span aria-hidden="true">↻</span>
+          <span aria-hidden="true"><UiIcon name="refresh"/></span>
         </button>
         <button
           className="settings-btn"
           onClick={() => setSettingsOpen(true)}
           title="设置"
+          aria-label="设置"
         >
-          ⚙
+          <UiIcon name="settings"/>
         </button>
       </div>
 
@@ -565,7 +571,14 @@ function App() {
                 setTimeout(() => inputRef.current?.focus(), 0);
               }}
               title={cat}
+              role="button"
+              tabIndex={0}
+              aria-pressed={cat === activeCategory}
+              onKeyDown={event => {
+                if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); setActiveCategory(cat); setQuery(""); }
+              }}
             >
+              <CategoryIcon category={cat}/>
               <span className="category-name">{cat}</span>
               {cat !== "全部" && !builtinCategories.includes(cat) && (
                 <button
@@ -626,13 +639,17 @@ function App() {
                 key={app.id}
                 data-icon-key={iconKey(app)}
                 className={`app-tile${idx === selectedIndex ? " selected" : ""}`}
+                role="group"
+                tabIndex={0}
+                aria-label={app.name}
+                onFocus={() => setSelectedIndex(idx)}
                 onClick={() => launch(app)}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setMenu({ app, x: e.clientX, y: e.clientY });
                 }}
                 onMouseEnter={() => setSelectedIndex(idx)}
-                title={`${app.name}\n${app.path}${app.arguments ? `\n${app.arguments}` : ""}\n单击启动 · 右键操作菜单 · 当前分类：${app.category}`}
+                aria-description={`${app.path}${app.arguments ? `，${app.arguments}` : ""}。单击启动，右键操作菜单，当前分类：${app.category}`}
               >
                 <div className="tile-actions" onContextMenu={(event) => event.stopPropagation()}>
                   <button className={config?.pinned_apps?.includes(app.id) ? "pinned" : ""}
@@ -658,7 +675,7 @@ function App() {
       </div>
 
       <div className="footer-hint">
-        <span>单击启动 · 右键菜单 · ↑↓←→ 导航 · Ctrl+回车 管理员 · Esc 隐藏</span>
+        <span className="footer-status">{filtered.length} 个应用<span className="footer-shortcuts"> · ↑↓←→ 导航 · Enter 启动 · Esc 收起</span></span>
         <button className="footer-link" onClick={() => openDiagnostics(null)}>应用诊断</button>
         <label className="show-all-toggle" title="勾选后显示被自动过滤的卸载程序、命令行工具等">
           <input
@@ -799,7 +816,7 @@ function App() {
               <div className="settings-label">窗口外观</div>
 
               <div className="settings-row">
-                <span className="settings-hint">背景透明度</span>
+                <span className="settings-hint">玻璃深度</span>
                 <input
                   type="range"
                   min="0.3"
