@@ -22,11 +22,22 @@ pub enum Hotkey {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Appearance {
     #[serde(default)]
+    pub theme: ThemePreference,
+    #[serde(default)]
     pub density: Density,
     /// 背景不透明度 0.0~1.0
     pub opacity: f64,
     /// 圆角大小（px）
     pub corner_radius: f64,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemePreference {
+    #[default]
+    Dark,
+    Light,
+    System,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -94,6 +105,7 @@ impl Default for Config {
             },
             autostart: false,
             appearance: Appearance {
+                theme: ThemePreference::Dark,
                 opacity: 0.8,
                 corner_radius: 24.0,
                 density: Density::Standard,
@@ -191,9 +203,67 @@ pub fn get() -> Config {
 /// 初始化（启动时调用一次）
 pub fn init() {
     let mut cfg = load();
+    migrate_discovery_ids(&mut cfg);
     cfg.autostart = crate::autostart::sync();
     let _ = save_inner(&cfg);
     let _ = CONFIG.set(Mutex::new(cfg));
+}
+
+// Keep personalization when discovery identities stop counting attribution
+// switches / identical version copies / known launcher components as separate applications.
+pub(crate) fn migrate_discovery_ids(cfg: &mut Config) {
+    use std::collections::{HashMap, HashSet};
+    fn list(values: &mut Vec<String>) {
+        let mut seen = HashSet::new();
+        *values = std::mem::take(values)
+            .into_iter()
+            .map(|id| crate::app_identity::migrated_id(&id))
+            .filter(|id| seen.insert(id.clone()))
+            .collect();
+    }
+    fn map<T>(values: &mut HashMap<String, T>, merge: impl Fn(&mut T, T)) {
+        let mut old: Vec<_> = std::mem::take(values).into_iter().collect();
+        // Existing canonical preferences win scalar conflicts deterministically.
+        old.sort_by_cached_key(|(id, _)| (crate::app_identity::migrated_id(id) != *id, id.clone()));
+        for (id, value) in old {
+            let id = crate::app_identity::migrated_id(&id);
+            if let Some(existing) = values.get_mut(&id) {
+                merge(existing, value);
+            } else {
+                values.insert(id, value);
+            }
+        }
+    }
+    list(&mut cfg.pinned_apps);
+    list(&mut cfg.hidden_apps);
+    map(&mut cfg.app_categories, |_, _| {});
+    map(&mut cfg.launch_overrides, |_, _| {});
+    map(&mut cfg.aliases, |existing, incoming| {
+        for alias in incoming {
+            if !existing.contains(&alias) {
+                existing.push(alias);
+            }
+        }
+    });
+    map(&mut cfg.usage, |existing, incoming| {
+        existing.count = existing.count.saturating_add(incoming.count);
+        existing.last_launch = existing.last_launch.max(incoming.last_launch);
+    });
+    map(&mut cfg.entry_records, |existing, incoming| {
+        if incoming.repaired && !existing.repaired {
+            *existing = incoming;
+        }
+    });
+    for (id, record) in &mut cfg.entry_records {
+        record.entry.id = id.clone();
+        if !record.repaired {
+            if let Some(target) =
+                crate::app_identity::version_target(std::path::Path::new(&record.entry.path))
+            {
+                record.entry.path = target.to_string_lossy().into_owned();
+            }
+        }
+    }
 }
 
 // ==================== Tauri 命令 ====================
@@ -378,6 +448,88 @@ fn increment_usage(cfg: &mut Config, id: &str, now: u64) -> Usage {
 mod tests {
     use super::*;
     #[test]
+    #[ignore = "只读预览当前用户发现身份迁移，不写入配置"]
+    fn host_discovery_migration_preview() {
+        let mut cfg = get();
+        migrate_discovery_ids(&mut cfg);
+        let once = serde_json::to_value(&cfg).unwrap();
+        migrate_discovery_ids(&mut cfg);
+        assert_eq!(serde_json::to_value(&cfg).unwrap(), once);
+        println!(
+            "LUMA_MIGRATED_CONFIG={}",
+            serde_json::to_string(&cfg).unwrap()
+        );
+    }
+    #[test]
+    fn browser_identity_migration_preserves_personalization_and_is_idempotent() {
+        let path = r"C:\Browser\chrome.exe";
+        let canonical = crate::model::identity(path, "");
+        let (canonical_path, _): (String, String) = serde_json::from_str(&canonical).unwrap();
+        let old =
+            serde_json::to_string(&(&canonical_path, "--source-shortcut-location=start-menu"))
+                .unwrap();
+        let profile = crate::model::identity(path, "--profile-directory=Work");
+        let mut cfg = Config::default();
+        cfg.pinned_apps = vec![
+            "manual-web".into(),
+            old.clone(),
+            canonical.clone(),
+            profile.clone(),
+        ];
+        cfg.hidden_apps = vec![old.clone()];
+        cfg.app_categories.insert(old.clone(), "办公".into());
+        cfg.aliases
+            .insert(old.clone(), vec!["网页".into(), "工作".into()]);
+        cfg.aliases.insert(canonical.clone(), vec!["网页".into()]);
+        cfg.usage.insert(
+            old.clone(),
+            Usage {
+                count: 2,
+                last_launch: 20,
+            },
+        );
+        cfg.usage.insert(
+            canonical.clone(),
+            Usage {
+                count: 3,
+                last_launch: 10,
+            },
+        );
+        cfg.launch_overrides.insert(
+            old.clone(),
+            crate::personal::LaunchOverride {
+                arguments: "--new-window".into(),
+                working_dir: None,
+            },
+        );
+        let mut entry =
+            crate::model::AppEntry::new("Chrome".into(), path.into(), "开始菜单", String::new());
+        entry.id = old.clone();
+        entry.arguments = "--source-shortcut-location=start-menu".into();
+        cfg.entry_records.insert(
+            old,
+            crate::health::EntryRecord {
+                entry,
+                repaired: false,
+            },
+        );
+        migrate_discovery_ids(&mut cfg);
+        assert_eq!(
+            cfg.pinned_apps,
+            vec!["manual-web".into(), canonical.clone(), profile]
+        );
+        assert_eq!(cfg.hidden_apps, vec![canonical.clone()]);
+        assert_eq!(cfg.app_categories[&canonical], "办公");
+        assert_eq!(cfg.aliases[&canonical], vec!["网页", "工作"]);
+        assert_eq!(cfg.usage[&canonical].count, 5);
+        assert_eq!(cfg.usage[&canonical].last_launch, 20);
+        assert_eq!(cfg.launch_overrides[&canonical].arguments, "--new-window");
+        assert_eq!(cfg.entry_records[&canonical].entry.id, canonical);
+        let snapshot = serde_json::to_value(&cfg).unwrap();
+        migrate_discovery_ids(&mut cfg);
+        assert_eq!(serde_json::to_value(&cfg).unwrap(), snapshot);
+    }
+    #[test]
     fn category_drop_accepts_builtin_custom_and_auto_but_rejects_stale_targets() {
         assert!(validate_category("", &[]).is_ok());
         assert!(validate_category("办公", &[]).is_ok());
@@ -416,9 +568,11 @@ mod tests {
             old.as_object_mut().unwrap().remove(field);
         }
         old["appearance"].as_object_mut().unwrap().remove("density");
+        old["appearance"].as_object_mut().unwrap().remove("theme");
         let cfg: Config = serde_json::from_value(old).unwrap();
         assert_eq!(cfg.window_size, crate::position::WindowSize::default());
         assert_eq!(cfg.appearance.density, Density::Standard);
+        assert_eq!(cfg.appearance.theme, ThemePreference::Dark);
         assert!(cfg.entry_records.is_empty());
         assert!(cfg.pinned_apps.is_empty() && cfg.hidden_apps.is_empty() && cfg.usage.is_empty());
         assert!(cfg.window_position.is_none());

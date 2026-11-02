@@ -53,9 +53,36 @@ fn executable(path: &Path) -> bool {
         .unwrap_or_default()
         .to_string_lossy()
         .to_lowercase();
-    !["unins", "uninstall", "setup", "update", "maintenancetool"]
-        .iter()
-        .any(|prefix| name.starts_with(prefix))
+    ![
+        "unins",
+        "uninstall",
+        "setup",
+        "update",
+        "installer",
+        "maintenancetool",
+    ]
+    .iter()
+    .any(|part| name.contains(part))
+        && !maintenance_description(&format!(
+            "{} {}",
+            crate::version_string(&path.to_string_lossy(), "FileDescription").unwrap_or_default(),
+            crate::version_string(&path.to_string_lossy(), "ProductName").unwrap_or_default()
+        ))
+}
+
+fn maintenance_description(text: &str) -> bool {
+    let text = text.to_lowercase();
+    [
+        " setup",
+        " installer",
+        "uninstall",
+        "update and remove",
+        "更新程序",
+        "安装程序",
+        "卸载程序",
+    ]
+    .iter()
+    .any(|part| text.contains(part))
 }
 
 fn installation_name(name: &str) -> String {
@@ -78,10 +105,14 @@ fn normalized_name(name: &str) -> String {
         .collect()
 }
 
-fn installation_target(name: &str, location: &str, display_icon: &str) -> Option<PathBuf> {
+pub(crate) fn installation_target(
+    name: &str,
+    location: &str,
+    display_icon: &str,
+) -> Option<PathBuf> {
     let icon = icon_file(display_icon);
     if executable(&icon) {
-        return Some(icon);
+        return Some(crate::app_identity::version_target(&icon).unwrap_or(icon));
     }
     // 只在已知安装布局中找同名主程序，不把组件 EXE 或卸载命令当成入口。
     let directory = PathBuf::from(expand_environment(location.trim().trim_matches('"')));
@@ -160,7 +191,7 @@ pub fn scan_app_paths(apps: &mut Vec<AppEntry>, seen: &mut HashSet<String>) {
                     continue;
                 };
                 let target = icon_file(&value);
-                if !executable(&target) {
+                if !executable(&target) || !crate::portable::gui_executable(&target) {
                     crate::diagnostics::record(
                         "扫描",
                         &value,
@@ -176,12 +207,15 @@ pub fn scan_app_paths(apps: &mut Vec<AppEntry>, seen: &mut HashSet<String>) {
                 } else {
                     "系统"
                 };
-                let app = AppEntry::new(
+                let mut app = AppEntry::new(
                     name,
                     path,
                     &format!("App Paths（{scope}）"),
                     format!("{scope}\\App Paths\\{key}"),
                 );
+                if crate::package_identity::internal_executable(&target) {
+                    app.hidden_reason = Some("包清单未声明为应用的内部程序".into());
+                }
                 if seen.insert(app.id.clone()) {
                     apps.push(app);
                 }
@@ -317,6 +351,15 @@ pub fn scan_installed_apps(apps: &mut Vec<AppEntry>, seen: &mut HashSet<String>)
                     );
                     continue;
                 };
+                if !crate::portable::gui_executable(&target) {
+                    crate::diagnostics::record(
+                        "过滤",
+                        &target.to_string_lossy(),
+                        None,
+                        "安装记录指向命令行或辅助程序，未作为图形应用收录",
+                    );
+                    continue;
+                }
                 let path = target.to_string_lossy().to_string();
                 let scope = if hive == HKEY_CURRENT_USER {
                     "用户"
@@ -346,6 +389,56 @@ pub fn scan_installed_apps(_apps: &mut Vec<AppEntry>, _seen: &mut HashSet<String
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn installation_icons_cannot_supply_installers_or_maintenance_tools() {
+        assert!(maintenance_description("Microsoft OneDrive (64 bit) Setup"));
+        assert!(maintenance_description(
+            "Realtek HD Audio Update and remove driver Tool"
+        ));
+        assert!(!maintenance_description("Microsoft OneDrive"));
+        assert!(!maintenance_description("Visual Studio Code"));
+        let root = std::env::temp_dir().join(format!("luma-install-icon-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                for name in [
+                    "OneDriveSetup.exe",
+                    "PowerToysUserSetup.exe",
+                    "winsdksetup.exe",
+                    "Editor.exe",
+                ] {
+                    let _ = std::fs::remove_file(self.0.join(name));
+                }
+                let _ = std::fs::remove_dir(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(root.clone());
+        for name in [
+            "OneDriveSetup.exe",
+            "PowerToysUserSetup.exe",
+            "winsdksetup.exe",
+            "Editor.exe",
+        ] {
+            std::fs::write(root.join(name), b"fixture").unwrap();
+        }
+        for name in [
+            "OneDriveSetup.exe",
+            "PowerToysUserSetup.exe",
+            "winsdksetup.exe",
+        ] {
+            assert!(!executable(&root.join(name)));
+        }
+        assert!(executable(&root.join("Editor.exe")));
+        assert_eq!(
+            installation_target(
+                "Editor",
+                &root.to_string_lossy(),
+                &root.join("PowerToysUserSetup.exe").to_string_lossy()
+            ),
+            Some(root.join("Editor.exe"))
+        );
+    }
 
     #[test]
     #[ignore = "读取本机安装记录；通过 LUMA_EXPECT_APP 指定要验证的应用"]

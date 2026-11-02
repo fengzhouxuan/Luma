@@ -14,6 +14,7 @@ import { UiIcon, CategoryIcon } from "./UiIcon";
 import { Dialog } from "./Dialog";
 import { useOverlayFocus } from "./overlayFocus";
 import { LatestWriter } from "./latestWriter";
+import { useTheme } from "./useTheme";
 import { FixedBar } from "./FixedBar";
 import { FileSearch, type FileSearchHandle } from "./FileSearchPanel";
 import { fixedApps } from "./dock";
@@ -23,6 +24,7 @@ import type { AppEntry, Config, HotkeyConfig, Usage, ScanResult, Diagnostics, Ma
 import { IconLoader, iconKey, type IconTarget } from "./iconLoader";
 import "./App.css";
 import "./layout.css";
+import "./themes.css";
 
 const AUTO_SCAN_INTERVAL = 5 * 60 * 1000;
 const WAKE_SCAN_INTERVAL = 60 * 1000;
@@ -60,6 +62,7 @@ function App() {
   const [diagnosticId, setDiagnosticId] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<Diagnostics | null>(null);
   const [config, setConfig] = useState<Config | null>(null);
+  const resolvedTheme = useTheme(config?.appearance.theme);
   const [editor, setEditor] = useState<EditorTarget | null>(null);
   const [menu, setMenu] = useState<{ app: AppEntry; x: number; y: number } | null>(null);
   const [preview, setPreview] = useState<BackupPreview | null>(null);
@@ -840,7 +843,7 @@ function App() {
       </div>
 
       <div className="footer-hint">
-        <span className="footer-status">{filtered.length} 个应用<span className="footer-shortcuts"> · ↑↓←→ 导航 · Enter 启动 · Esc 收起</span></span>
+        <span className="footer-status" title="↑↓←→ 导航 · Enter 启动 · Ctrl+Enter 管理员启动 · Esc 收起">{filtered.length} 个应用<span className="footer-shortcuts"> · ↑↓←→ 导航 · Enter 启动</span><span className="footer-admin-shortcut"> · Ctrl+Enter 管理员启动</span><span className="footer-shortcuts"> · Esc 收起</span></span>
         <button className="footer-link" onClick={() => openDiagnostics(null)}>应用诊断</button>
         <button className="footer-link" onClick={openHealth}>入口检查{healthById.size ? ` · ${healthById.size}` : ""}</button>
         <label className="show-all-toggle" title="勾选后显示被自动过滤的卸载程序、命令行工具等">
@@ -977,6 +980,8 @@ function App() {
             <div className="settings-section">
               <div className="settings-label">窗口外观</div>
               <div className="window-layout-controls">
+                <div className="theme-choices" role="group" aria-label="主题模式">{([['dark','深色'],['light','浅色'],['system','跟随系统']] as const).map(([theme,label])=><button key={theme} className="btn" aria-pressed={(config.appearance.theme??'dark')===theme} onClick={()=>{changeAppearance({theme});flushAppearance();}}>{label}</button>)}</div>
+                <p className="settings-hint theme-hint">{config.appearance.theme === 'system' ? `跟随 Windows 应用主题，当前为${resolvedTheme === 'light' ? '浅色' : '深色'}，系统切换后自动更新。` : '主题立即生效，并自动保存。'}</p>
                 <div className="density-choices" role="group" aria-label="卡片显示密度">{([['compact','紧凑'],['standard','标准'],['comfortable','宽松']] as const).map(([density,label])=><button key={density} className="btn" aria-pressed={(config.appearance.density??'standard')===density} onClick={()=>{changeAppearance({density});flushAppearance();}}>{label}</button>)}</div>
                 <div className="window-size-row">
                   <span className="settings-hint">拖动窗口边缘调整大小，尺寸自动保存。</span>

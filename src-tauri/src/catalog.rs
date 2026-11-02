@@ -105,11 +105,12 @@ pub fn full_due() -> bool {
 
 fn merged(sources: &[Vec<AppEntry>; 3]) -> Vec<AppEntry> {
     let mut seen = HashSet::new();
-    let mut apps: Vec<_> = sources
+    let mut candidates: Vec<_> = sources.iter().flatten().collect();
+    candidates.sort_by_key(|app| app.source != "商店 / MSIX 应用");
+    let mut apps: Vec<_> = candidates
         .iter()
-        .flatten()
         .filter(|app| seen.insert(app.id.clone()))
-        .cloned()
+        .map(|app| (**app).clone())
         .collect();
     apps.sort_by(|a, b| {
         a.name
@@ -129,15 +130,16 @@ pub fn find(id: &str) -> Option<AppEntry> {
         .into_iter()
         .find(|app| app.id == id)
         .or_else(|| {
-            state()
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .sources
-                .iter()
-                .flatten()
-                .find(|app| app.id == id)
-                .cloned()
-                .map(|app| crate::personal::effective(app, &cfg))
+            merged(
+                &state()
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .sources,
+            )
+            .iter()
+            .find(|app| app.id == id)
+            .cloned()
+            .map(|app| crate::personal::effective(app, &cfg))
         })
         .or_else(|| {
             cfg.entry_records
@@ -276,6 +278,111 @@ pub fn scan(force: bool) -> ScanResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn browser_sources_merge_without_losing_real_launch_variants() {
+        let path = r"C:\Browser\chrome.exe";
+        let bare = AppEntry::new(
+            "Google Chrome".into(),
+            path.into(),
+            "App Paths",
+            String::new(),
+        );
+        let mut shortcut = bare.clone();
+        shortcut.arguments = "--source-shortcut-location=start-menu".into();
+        shortcut.shortcut_path = Some(r"C:\Start Menu\Google Chrome.lnk".into());
+        shortcut.update_identity();
+        let mut incognito = shortcut.clone();
+        incognito.arguments = "--incognito --source-shortcut-location=desktop".into();
+        incognito.update_identity();
+        let mut profile = bare.clone();
+        profile.arguments = r#"--profile-directory="Profile 1""#.into();
+        profile.update_identity();
+        let other_install = AppEntry::new(
+            "Google Chrome".into(),
+            r"D:\Browser\chrome.exe".into(),
+            "App Paths",
+            String::new(),
+        );
+        let apps = merged(&[
+            vec![shortcut.clone(), incognito, profile],
+            vec![bare, other_install],
+            vec![],
+        ]);
+        assert_eq!(apps.len(), 4);
+        assert_eq!(
+            apps.iter()
+                .find(|app| app.id == shortcut.id)
+                .unwrap()
+                .shortcut_path,
+            shortcut.shortcut_path
+        );
+    }
+
+    #[test]
+    fn registered_package_is_preferred_over_a_duplicate_native_entry() {
+        let managed = AppEntry::new(
+            "App".into(),
+            r"shell:AppsFolder\Family_pub!App".into(),
+            "商店 / MSIX 应用",
+            String::new(),
+        );
+        let mut native = AppEntry::new(
+            "App native".into(),
+            r"C:\WindowsApps\Family\app.exe".into(),
+            "App Paths",
+            String::new(),
+        );
+        native.id = managed.id.clone();
+        let apps = merged(&[vec![native], vec![managed.clone()], vec![]]);
+        assert_eq!(apps, vec![managed]);
+    }
+
+    #[test]
+    #[ignore = "只读本机完整目录，输出审计 JSON；不启动应用或写入用户配置"]
+    fn host_discovery_audit() {
+        let cfg = crate::config::get();
+        let sources = [
+            crate::scan_source(0),
+            crate::scan_source(1),
+            crate::scan_source(2),
+        ];
+        let mut apps: Vec<_> = merged(&sources)
+            .into_iter()
+            .map(|app| crate::personal::effective(app, &cfg))
+            .collect();
+        apps.extend(crate::personal::entries(&cfg));
+        let apps = crate::health::decorate(apps, &cfg);
+        println!(
+            "LUMA_AUDIT={}",
+            serde_json::json!({"source_counts":sources.iter().map(Vec::len).collect::<Vec<_>>(),"apps":apps,"hidden_ids":cfg.hidden_apps})
+        );
+    }
+
+    #[test]
+    #[ignore = "读取本机扫描入口；LUMA_EXPECT_APP 与 LUMA_EXPECT_COUNT 指定应用和去重后数量"]
+    fn host_discovery_deduplication() {
+        let expected = std::env::var("LUMA_EXPECT_APP")
+            .expect("需要指定应用")
+            .to_lowercase();
+        assert!(!expected.is_empty());
+        let count: usize = std::env::var("LUMA_EXPECT_COUNT")
+            .expect("需要指定数量")
+            .parse()
+            .unwrap();
+        let sources = [crate::scan_source(0), crate::scan_source(1), Vec::new()];
+        let apps = merged(&sources);
+        let found: Vec<_> = apps
+            .iter()
+            .filter(|app| app.name.to_lowercase().contains(&expected))
+            .collect();
+        for app in &found {
+            println!(
+                "{} | {} | {} | {}",
+                app.name, app.path, app.arguments, app.source
+            );
+        }
+        assert_eq!(found.len(), count);
+    }
     #[test]
     fn only_invalidated_sources_are_scanned_between_full_refreshes() {
         assert!(scan(true).report.full);

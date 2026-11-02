@@ -42,27 +42,31 @@ pub fn is_shell_item(path: &str) -> bool {
         })
 }
 
-struct Apartment;
+pub(crate) struct Apartment(bool);
 impl Apartment {
-    fn enter() -> Result<Self, String> {
+    pub(crate) fn enter() -> Result<Self, String> {
         unsafe {
-            CoInitializeEx(None, COINIT_APARTMENTTHREADED)
-                .ok()
-                .map_err(|e| e.to_string())?;
+            let status = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            if status.0 == 0x80010106u32 as i32 {
+                return Ok(Self(false)); // Reuse the caller's already initialized MTA.
+            }
+            status.ok().map_err(|e| e.to_string())?;
         }
-        Ok(Self)
+        Ok(Self(true))
     }
 }
 impl Drop for Apartment {
     fn drop(&mut self) {
-        unsafe { CoUninitialize() }
+        if self.0 {
+            unsafe { CoUninitialize() }
+        }
     }
 }
 
 // Shell 分配的字符串必须用 CoTaskMemFree 释放，包括转换失败的情况。
-struct ShellString(PWSTR);
+pub(crate) struct ShellString(pub(crate) PWSTR);
 impl ShellString {
-    fn text(&self) -> Result<String, String> {
+    pub(crate) fn text(&self) -> Result<String, String> {
         if self.0.is_null() {
             return Err("Shell 未返回字符串".into());
         }
@@ -252,7 +256,11 @@ pub fn scan(apps: &mut Vec<AppEntry>, seen: &mut HashSet<String>) {
     match std::thread::spawn(enumerate).join() {
         Ok(Ok(found)) => {
             for app in found {
-                if seen.insert(app.id.clone()) {
+                if app.source == "商店 / MSIX 应用"
+                    && let Some(existing) = apps.iter_mut().find(|existing| existing.id == app.id)
+                {
+                    *existing = app;
+                } else if seen.insert(app.id.clone()) {
                     apps.push(app);
                 }
             }

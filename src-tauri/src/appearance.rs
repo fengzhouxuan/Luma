@@ -280,13 +280,25 @@ mod tests {
     }
 }
 
+fn apply_theme(window: &tauri::WebviewWindow) {
+    use crate::config::ThemePreference;
+    let theme = match crate::config::get().appearance.theme {
+        ThemePreference::Dark => Some(tauri::Theme::Dark),
+        ThemePreference::Light => Some(tauri::Theme::Light),
+        ThemePreference::System => None,
+    };
+    if let Err(error) = window.set_theme(theme) {
+        crate::diagnostics::record("窗口", "主题", None, error.to_string());
+    }
+}
+
 pub fn setup(window: &tauri::WebviewWindow) {
     #[cfg(windows)]
     {
         if let Err(error) = frame::attach(window) {
             crate::diagnostics::record("窗口", "玻璃边框", None, error);
         }
-        let _ = window.set_theme(Some(tauri::Theme::Dark));
+        apply_theme(window);
         after_show(window);
         // Neither System Backdrop nor Accent Blur clipped reliably on the user's
         // desktop. Keep the native surface transparent; draw the glass face in CSS.
@@ -324,6 +336,7 @@ pub fn refresh(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let target = window.clone();
         let _ = window.run_on_main_thread(move || {
+            apply_theme(&target);
             if let Err(error) = clip(&target) {
                 crate::diagnostics::record("窗口", "圆角裁切", None, error);
             }

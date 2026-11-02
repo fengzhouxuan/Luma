@@ -105,7 +105,7 @@ input[type="checkbox"] { accent-color: #8fd9da; }
 .hint { grid-column: 1/-1; text-align: center; align-self: center; padding: 88px 12px; color: var(--mv-text-secondary); font-size: 14px; }
 .footer-hint { flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 13px 24px 15px; border-top: 1px solid var(--mv-border); color: var(--mv-text-muted); font-size: 11px; }
 .footer-status { flex: 1; min-width: 0; white-space: nowrap; }
-.footer-shortcuts { color: #b4c3dc; }
+.footer-shortcuts, .footer-admin-shortcut { color: #b4c3dc; }
 .footer-link { padding: 5px 9px; border: 1px solid transparent; border-radius: 10px; color: #b7e8e7; background: transparent; font-size: 11px; white-space: nowrap; }
 .footer-link:hover { border-color: var(--mv-border); background: #ffffff08; }
 .show-all-toggle { display: flex; align-items: center; gap: 7px; color: var(--mv-text-secondary); cursor: pointer; white-space: nowrap; }

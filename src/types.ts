@@ -25,7 +25,7 @@ export interface Config {
   window_size?: { width: number; height: number };
   hotkey: HotkeyConfig;
   autostart: boolean;
-  appearance: { opacity: number; corner_radius: number; density?: "compact" | "standard" | "comfortable" };
+  appearance: { opacity: number; corner_radius: number; density?: "compact" | "standard" | "comfortable"; theme?: "dark" | "light" | "system" };
   show_all?: boolean;
   extra_dirs?: string[];
   custom_categories?: string[];

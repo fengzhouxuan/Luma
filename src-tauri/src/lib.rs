@@ -1,14 +1,17 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+mod app_identity;
 mod appearance;
 mod autostart;
 mod backup;
+mod browser;
 mod catalog;
 mod config;
 mod diagnostics;
 mod discovery;
 mod file_search;
+mod game_discovery;
 mod health;
 #[cfg(windows)]
 mod icon_resource;
@@ -25,6 +28,8 @@ mod updates;
 mod watcher;
 
 mod model;
+#[cfg(windows)]
+mod package_identity;
 #[cfg(windows)]
 mod packaged;
 use model::AppEntry;
@@ -72,6 +77,7 @@ fn scan_game_dirs(apps: &mut Vec<AppEntry>, seen: &mut HashSet<String>) {
     for root in game_roots() {
         scan_dir_exes(&root, 8, apps, seen);
     }
+    crate::game_discovery::annotate(apps, &config::get());
 }
 
 fn game_roots() -> Vec<PathBuf> {
@@ -529,6 +535,16 @@ fn resolve_lnk_target(shortcut: &parselnk::Lnk, lnk_path: &PathBuf) -> Option<St
 /// 从 exe 的版本资源读取 FileDescription（友好显示名）
 #[cfg(windows)]
 fn friendly_name(path: &str) -> Option<String> {
+    version_string_impl(path, "FileDescription", false)
+}
+
+#[cfg(windows)]
+fn version_string(path: &str, key: &str) -> Option<String> {
+    version_string_impl(path, key, true)
+}
+
+#[cfg(windows)]
+fn version_string_impl(path: &str, key: &str, translated: bool) -> Option<String> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
         GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW,
@@ -541,7 +557,7 @@ fn friendly_name(path: &str) -> Option<String> {
 
     unsafe {
         let size = GetFileVersionInfoSizeW(wide.as_ptr(), std::ptr::null_mut());
-        if size == 0 {
+        if size == 0 || size > 4 * 1024 * 1024 {
             return None;
         }
 
@@ -552,8 +568,29 @@ fn friendly_name(path: &str) -> Option<String> {
 
         // 构造查询字符串：\StringFileInfo\<lang>\FileDescription
         // 常见语言代码：040904B0（英文 US）、080404B0（中文简体）
-        for lang in ["040904B0", "080404B0"] {
-            let sub_block: Vec<u16> = format!("\\StringFileInfo\\{}\\FileDescription\0", lang)
+        let mut languages = Vec::new();
+        let translation: Vec<u16> = "\\VarFileInfo\\Translation\0".encode_utf16().collect();
+        let mut translations: *mut u16 = std::ptr::null_mut();
+        let mut translation_len = 0;
+        if translated
+            && VerQueryValueW(
+                buffer.as_ptr() as _,
+                translation.as_ptr(),
+                &mut translations as *mut _ as *mut _,
+                &mut translation_len,
+            ) != 0
+            && !translations.is_null()
+            && translation_len <= size
+        {
+            for i in 0..translation_len as usize / 4 {
+                let lang = std::ptr::read_unaligned(translations.add(i * 2));
+                let page = std::ptr::read_unaligned(translations.add(i * 2 + 1));
+                languages.push(format!("{lang:04X}{page:04X}"));
+            }
+        }
+        languages.extend(["040904B0".into(), "080404B0".into()]);
+        for lang in languages {
+            let sub_block: Vec<u16> = format!("\\StringFileInfo\\{}\\{}\0", lang, key)
                 .encode_utf16()
                 .collect();
 
@@ -586,6 +623,11 @@ fn friendly_name(path: &str) -> Option<String> {
 
 #[cfg(not(windows))]
 fn friendly_name(_path: &str) -> Option<String> {
+    None
+}
+
+#[cfg(not(windows))]
+fn version_string(_path: &str, _key: &str) -> Option<String> {
     None
 }
 

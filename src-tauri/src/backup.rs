@@ -154,6 +154,7 @@ fn apply(cfg: &mut Config, p: Preferences) {
     cfg.aliases = p.aliases;
     cfg.launch_overrides = p.launch_overrides;
     cfg.entry_records = p.entry_records;
+    config::migrate_discovery_ids(cfg);
     // 热键、自启和窗口位置属于本机环境，不从其他电脑的备份覆盖。
 }
 
@@ -269,9 +270,27 @@ pub fn import_config_backup(json: String, app: tauri::AppHandle) -> Result<Confi
 mod tests {
     use super::*;
     #[test]
+    fn importing_old_browser_preferences_migrates_discovery_ids() {
+        let id = serde_json::to_string(&(
+            r"C:\Browser\msedge.exe",
+            "--source-shortcut-location=start-menu",
+        ))
+        .unwrap();
+        let mut source = Config::default();
+        source.pinned_apps.push(id.clone());
+        source.aliases.insert(id, vec!["浏览器".into()]);
+        let data = parse(&serde_json::to_string(&from_config(&source)).unwrap()).unwrap();
+        let mut restored = Config::default();
+        apply(&mut restored, data.preferences);
+        let canonical = crate::model::identity(r"C:\Browser\msedge.exe", "");
+        assert_eq!(restored.pinned_apps, vec![canonical.clone()]);
+        assert_eq!(restored.aliases[&canonical], vec!["浏览器"]);
+    }
+    #[test]
     fn density_and_repaired_targets_round_trip_without_changing_local_window_size() {
         let mut cfg = Config::default();
         cfg.appearance.density = crate::config::Density::Compact;
+        cfg.appearance.theme = crate::config::ThemePreference::System;
         cfg.appearance.corner_radius = 36.0;
         let mut entry = crate::model::AppEntry::new(
             "原名称".into(),
@@ -296,6 +315,10 @@ mod tests {
         };
         apply(&mut restored, parsed.preferences);
         assert_eq!(restored.appearance.density, crate::config::Density::Compact);
+        assert_eq!(
+            restored.appearance.theme,
+            crate::config::ThemePreference::System
+        );
         assert_eq!(restored.appearance.corner_radius, 36.0);
         assert_eq!(restored.window_size.width, 1100.0);
         assert_eq!(

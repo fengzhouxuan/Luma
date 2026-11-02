@@ -31,9 +31,21 @@ pub fn identity(path: &str, arguments: &str) -> String {
     if path.contains("://") {
         return serde_json::to_string(&(path, arguments.trim())).expect("字符串可以序列化");
     }
-    let path = std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
+    let target = PathBuf::from(path);
+    #[cfg(windows)]
+    if let Some(managed) = crate::package_identity::canonical_target(&target, arguments) {
+        return identity(&managed, arguments);
+    }
+    let target = crate::app_identity::ghub_target(&target, arguments).unwrap_or(target);
+    let target = if arguments.trim().is_empty() || crate::browser::is_browser(&target) {
+        crate::app_identity::version_target(&target).unwrap_or(target)
+    } else {
+        target
+    };
+    let arguments = crate::browser::identity_arguments(&target, arguments);
+    let path = std::fs::canonicalize(&target).unwrap_or(target);
     let path = path.to_string_lossy().replace('/', "\\").to_lowercase();
-    serde_json::to_string(&(path, arguments.trim())).expect("字符串可以序列化")
+    serde_json::to_string(&(path, arguments.as_ref())).expect("字符串可以序列化")
 }
 
 impl AppEntry {
