@@ -14,6 +14,14 @@
 .file-setup p { color: var(--mv-text-secondary); font-size: 12px; line-height: 1.6; }
 .file-setup a { color: var(--mv-accent); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; text-underline-offset: 3px; }
 .file-setup a:focus-visible { outline: 2px solid var(--mv-accent); outline-offset: 3px; border-radius: 3px; }
+.file-connection-help { margin-bottom: 10px; border: 1px solid var(--mv-border); border-radius: 12px; background: #ffffff03; }
+.file-connection-help summary { display: flex; align-items: center; gap: 8px; padding: 10px 12px; color: var(--mv-text-secondary); font-size: 12px; cursor: pointer; list-style: none; border-radius: 11px; }
+.file-connection-help summary::-webkit-details-marker { display: none; }
+.file-connection-help summary::after { content: "＋"; margin-left: auto; color: var(--mv-text-muted); }
+.file-connection-help details[open] > summary::after { content: "−"; }
+.file-connection-help summary > .ui-icon { width: 15px; height: 15px; flex-shrink: 0; }
+.file-connection-help details > div { display: grid; gap: 8px; padding: 0 12px 12px; }
+.file-connection-help p { margin: 0; color: var(--mv-text-secondary); font-size: 12px; line-height: 1.6; }
 .file-retry { align-self: flex-start; }
 .quicklook-download { color: var(--mv-accent); font-size: 12px; text-underline-offset: 3px; }
 .file-preview-status { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border: 1px solid var(--mv-border-strong); border-radius: 12px; color: var(--mv-text-secondary); background: #9ad8df12; font-size: 12px; }

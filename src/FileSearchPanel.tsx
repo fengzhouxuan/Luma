@@ -8,6 +8,12 @@ import { UiIcon } from "./UiIcon";
 import "./fileSearch.css";
 
 export interface FileSearchHandle { onKeyDown(event: KeyboardEvent): boolean; closePreview(): boolean; refresh(): void }
+function EverythingStartupHint() {
+  return <>
+    <p>文件搜索需要 Everything 客户端在后台运行，仅启动 Everything 服务还不够。</p>
+    <p>建议在 Everything 的「工具 → 选项 → 常规」中开启客户端随系统启动。下次登录 Windows 后会在后台启动，不弹搜索窗口。</p>
+  </>;
+}
 export function FileSearch({ query, composing, suspended, ref, onOpened }: {
   query: string; composing: boolean; suspended: boolean; ref: Ref<FileSearchHandle>; onOpened(): void;
 }) {
@@ -132,6 +138,7 @@ export function FileSearch({ query, composing, suspended, ref, onOpened }: {
     return () => window.clearTimeout(timer);
   }, [startupUntil, busy, current, suspended, composing, response]);
   useEffect(() => { resultsRef.current?.querySelector(`[data-index="${selected}"]`)?.scrollIntoView({ block: "nearest" }); }, [selected]);
+  useEffect(() => { if (resultsRef.current) resultsRef.current.scrollTop = 0; }, [response?.state]);
   useEffect(() => { if (!notice) return; const timer = window.setTimeout(() => setNotice(""), 3000); return () => window.clearTimeout(timer); }, [notice]);
 
   const action = async (entry: FileEntry, operation: "open" | "reveal" | "copy") => {
@@ -160,7 +167,9 @@ export function FileSearch({ query, composing, suspended, ref, onOpened }: {
       if (shortcut === "next" || shortcut === "previous") {
         const next = context === "search" ? selected : Math.max(0, Math.min(items.length - 1, selected + (shortcut === "next" ? 1 : -1)));
         setSelected(next);
-        resultsRef.current?.querySelector<HTMLButtonElement>(`[data-index="${next}"] .file-open`)?.focus({ preventScroll: true });
+        const row = resultsRef.current?.querySelector<HTMLButtonElement>(`[data-index="${next}"] .file-open`);
+        row?.focus({ preventScroll: true });
+        row?.scrollIntoView({ block: "nearest" });
         if (previewWanted.current) void changePreview(items[next].id);
       } else if (shortcut === "preview") {
         void changePreview(previewWanted.current ? null : items[selected].id);
@@ -194,11 +203,15 @@ export function FileSearch({ query, composing, suspended, ref, onOpened }: {
     {quicklookMissing && <a className="quicklook-download" href="https://github.com/QL-Win/QuickLook/releases" onClick={event => { event.preventDefault(); void invoke("open_quicklook_download").catch(reason => setError(String(reason))); }}>安装 QuickLook：打开官方下载页</a>}
     {(previewing || previewBusy) && <div className="file-preview-status" role="status"><span>{previewBusy ? previewing ? "正在连接 QuickLook…" : "正在关闭预览…" : `QuickLook 预览中：${previewName} · ↑↓ 切换 · 空格 / Esc 关闭`}</span><button className="btn" onClick={() => void changePreview(null)}>关闭预览</button></div>}
     <ul className="file-results" aria-label="文件搜索结果" ref={resultsRef} aria-busy={busy}>
+      {response?.state !== "unavailable" && <li className="file-connection-help">
+        <details><summary><UiIcon name="info"/><span>Everything 连接与自启说明</span></summary><div><EverythingStartupHint/></div></details>
+      </li>}
       {(current || startupUntil > 0) && response?.state === "unavailable" && <li className="file-setup">
-        <strong>安装 Everything 后即可搜索文件</strong>
+        <strong>连接 Everything 客户端后即可搜索文件</strong>
         <p>支持 1.4 / 1.5 普通版，请勿选择 Lite 版。安装后启动客户端，等待首次索引完成即可使用。</p>
         <a href="https://www.voidtools.com/downloads/" target="_blank" rel="noreferrer" onClick={event => { event.preventDefault(); void download(); }}>官方下载：https://www.voidtools.com/downloads/</a>
         <p>安装目录不限。回到 Luma 会自动重新连接，无需重启；便携版可先手动运行 Everything。</p>
+        <EverythingStartupHint/>
         <div className="file-connection-actions"><button className="btn" disabled={startupUntil > 0} onClick={() => void start()}>{startupUntil ? "正在启动 Everything…" : "已安装，启动 Everything"}</button><button className="btn" onClick={() => setRefresh(value => value + 1)}>重新连接</button></div>
       </li>}
       {items.map((entry, index) => <li key={entry.id} className={`file-result${index === selected ? " selected" : ""}`} data-index={index}>

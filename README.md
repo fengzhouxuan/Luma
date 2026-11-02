@@ -2,7 +2,7 @@
 
 适用于 Windows 的轻量应用启动器。按 **`Alt+Shift+Space`** 唤出，用名称、拼音或首字母搜索应用，再按回车启动。
 
-当前源码版本：**1.12.0**。基于 Tauri 2、React、TypeScript 和 Rust，提供 Liquid Glass 深色玻璃界面、系统托盘与键盘操作。
+当前源码版本：**1.12.1**。基于 Tauri 2、React、TypeScript 和 Rust，提供 Liquid Glass 深色玻璃界面、系统托盘与键盘操作。
 
 [下载安装包](https://github.com/fengzhouxuan/Luma/releases) · [更新日志](./CHANGELOG.md) · [反馈问题](https://github.com/fengzhouxuan/Luma/issues)
 
@@ -82,6 +82,7 @@ EXE 安装包默认安装到当前用户的 `%LOCALAPPDATA%\Luma`，并创建开
 
 - 需要已安装并运行的 **Everything 普通版客户端**，仅启动 Everything Service 或使用 Lite 版不够；未连接提示中提供 [Everything 官方下载地址](https://www.voidtools.com/downloads/)，以及「已安装，启动 Everything」「重新连接」。安装目录不限，支持安装器登记的用户/系统级 32/64 位自定义位置；便携版可在任意目录手动启动。首次安装后等待索引建立，返回 Luma 会自动重新查询，无需重启 Luma。
 - 支持 Everything **1.4 / 1.5**。优先通过 1.5 的官方 SDK3 查询默认实例或 `1.5a` 实例，回退 SDK2 兼容 1.4；其他自定义命名实例暂不支持。1.5 当前为 Beta，可按个人需要选择，Luma 不强制升级。
+- 建议在 Everything「工具 → 选项 → 常规」开启客户端随系统启动，登录后会后台运行，不弹搜索窗口；只有 Everything 服务自启还不能提供文件搜索接口。未连接提示和文件结果中的「Everything 连接与自启说明」均可查看这项提醒，不会自动更改 Everything 设置。
 - `↑/↓` 选择并聚焦结果，`Enter` 打开，`Shift+Enter` 在资源管理器中定位，`Ctrl+Shift+C` 复制路径；Tab 可访问每项的操作按钮。
 - **QuickLook 空格预览**：文件结果获得焦点后按空格，或点击每行的预览按钮；搜索框中的空格仍正常输入。预览期间在 Luma 使用上下方向键切换文件，空格或 Esc 关闭并保留搜索词、选中项和滚动位置。预览窗口显示在 Luma 所在显示器的工作区内，并临时置于上层，不修改 QuickLook 保存的置顶选项。点击其他应用、收起 Luma、切换搜索或离开文件模式时结束当前预览。
 - 需要单独安装 [QuickLook](https://github.com/QL-Win/QuickLook/releases)，未安装时显示下载入口。已运行时通过当前用户的本地管道通信，不依赖安装目录；未运行时从安装位置或应用目录记录启动，商店版可通过系统入口启动，自定义便携版可先手动运行。首次启动最多等待约 5 秒连接，发送请求有超时；切换请求串行执行并丢弃中间旧请求。预览格式由 QuickLook 及其插件决定。QuickLook 与其他文件管理器共用其未固定预览窗口，同时调用时可能相互替换。Luma 仅调用外部程序，不包含 QuickLook 二进制或渲染源码；接口参考 [官方集成文档](https://github.com/QL-Win/QuickLook/wiki/Develop,-build-and-integrate)。
