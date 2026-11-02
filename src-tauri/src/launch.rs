@@ -11,10 +11,21 @@ pub struct LaunchResult {
 }
 
 #[tauri::command]
-pub async fn launch_app(app_id: String, admin: bool) -> Result<LaunchResult, String> {
+pub async fn launch_app(
+    app_id: String,
+    admin: bool,
+    new_window: Option<bool>,
+) -> Result<LaunchResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let mut app = catalog::find(&app_id).ok_or("应用记录已失效，请刷新后重试")?;
         if config::get().launch_overrides.contains_key(&app_id) {
+            app.shortcut_path = None;
+        }
+        if new_window.unwrap_or(false) {
+            if admin || !crate::running::can_new_window(&app) {
+                return Err("该入口不支持强制新开窗口，请使用再次启动".into());
+            }
+            app.arguments = "--new-window".into();
             app.shortcut_path = None;
         }
         match launch_entry(&app, admin) {
@@ -131,7 +142,7 @@ fn script_command(path: &str, arguments: &str) -> Result<(String, String), Strin
 }
 
 #[cfg(windows)]
-fn shell_execute(
+pub(crate) fn shell_execute(
     path: &str,
     arguments: &str,
     directory: Option<&str>,
@@ -169,7 +180,7 @@ fn shell_execute(
 }
 
 #[cfg(not(windows))]
-fn shell_execute(
+pub(crate) fn shell_execute(
     _path: &str,
     _arguments: &str,
     _directory: Option<&str>,

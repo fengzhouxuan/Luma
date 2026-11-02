@@ -1,0 +1,3 @@
+# Keep pinned upstream SDK files byte-for-byte, including their line endings.
+src-tauri/vendor/everything-sdk2/** -text -whitespace
+src-tauri/vendor/everything-sdk3/** -text -whitespace

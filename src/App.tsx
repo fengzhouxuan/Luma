@@ -6,6 +6,7 @@ import { rankApps } from "./search";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
 import { AppEditor, type EditorTarget } from "./AppEditor";
 import { AppMenu } from "./AppMenu";
+import { RunningAppDialog, type RunningWindows } from "./RunningAppDialog";
 import { EntryIcon } from "./EntryIcon";
 import { HealthPanel } from "./HealthPanel";
 import { dockShortcutIndex } from "./dockShortcuts";
@@ -14,6 +15,7 @@ import { Dialog } from "./Dialog";
 import { useOverlayFocus } from "./overlayFocus";
 import { LatestWriter } from "./latestWriter";
 import { FixedBar } from "./FixedBar";
+import { FileSearch, type FileSearchHandle } from "./FileSearchPanel";
 import { fixedApps } from "./dock";
 import { useAppDrag } from "./useAppDrag";
 import { ManagementTools, ImportPreview } from "./ManagementTools";
@@ -35,6 +37,9 @@ function hotkeyLabel(h: HotkeyConfig): string {
 function App() {
   const [apps, setApps] = useState<AppEntry[]>([]);
   const [query, setQuery] = useState("");
+  const [searchMode, setSearchMode] = useState<"apps" | "files">("apps");
+  const [composing, setComposing] = useState(false);
+  const fileSearchRef = useRef<FileSearchHandle>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -47,6 +52,9 @@ function App() {
   const [healthError, setHealthError] = useState("");
   const [altPressed, setAltPressed] = useState(false);
   const launchPending = useRef(false);
+  const checkingLaunch = useRef(false);
+  const launchRevision = useRef(0);
+  const [runningChoice, setRunningChoice] = useState<{ app: AppEntry; info: RunningWindows } | null>(null);
   const healthById = useMemo(() => new Map(healthChecks.filter(item=>item.state!=="unchecked").map(item=>[item.id,item])),[healthChecks]);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [diagnosticId, setDiagnosticId] = useState<string | null>(null);
@@ -71,7 +79,7 @@ function App() {
   const rootRef = useRef<HTMLDivElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const overlayKey = menu ? `menu:${menu.app.id}` : preview ? "import" : editor ? "editor" : healthOpen ? "health" : diagnosticsOpen ? "diagnostics" : settingsOpen ? "settings" : null;
+  const overlayKey = runningChoice ? `running:${runningChoice.app.id}` : menu ? `menu:${menu.app.id}` : preview ? "import" : editor ? "editor" : healthOpen ? "health" : diagnosticsOpen ? "diagnostics" : settingsOpen ? "settings" : null;
   useOverlayFocus(rootRef, overlayKey, openerRef, inputRef);
   const appearanceWriter = useRef<LatestWriter<Config["appearance"]> | null>(null);
   if (!appearanceWriter.current) appearanceWriter.current = new LatestWriter(
@@ -243,6 +251,7 @@ function App() {
     subscribe("open-settings", () => { setDiagnosticsOpen(false); setSettingsOpen(true); });
     subscribe("open-diagnostics", () => openDiagnostics(null));
     void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (!focused && checkingLaunch.current) ++launchRevision.current;
       if (!disposed && focused &&
         (lastScanAt.current === null || Date.now() - lastScanAt.current >= WAKE_SCAN_INTERVAL)) {
         void scan();
@@ -270,13 +279,13 @@ function App() {
   // 都能可靠关闭窗口，避免依赖 DOM 冒泡导致的 Esc 失效。
   useEffect(() => {
     const onGlobalKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
+      if (e.key !== "Escape" || e.repeat) return;
       e.preventDefault();
       hideLauncher();
     };
     window.addEventListener("keydown", onGlobalKeyDown);
     return () => window.removeEventListener("keydown", onGlobalKeyDown);
-  }, [settingsOpen, diagnosticsOpen, healthOpen, capturing, editor, preview, menu]);
+  }, [settingsOpen, diagnosticsOpen, healthOpen, capturing, editor, preview, menu, runningChoice, searchMode]);
 
   // 应用外观配置到 CSS 变量
   useEffect(() => {
@@ -315,20 +324,41 @@ function App() {
   };
 
   // 启动应用
-  const launch = async (app: AppEntry, admin: boolean = false) => {
+  const finishLaunch = async () => {
+    await invoke("hide_window");
+    setRunningChoice(null);
+    setQuery("");
+  };
+  const launch = async (app: AppEntry, admin = false, bypass = false, newWindow = false) => {
     if(launchPending.current)return;
     launchPending.current=true;
+    const revision = ++launchRevision.current;
     try {
-      const result = await invoke<{ usage: Usage | null }>("launch_app", { appId: app.id, admin });
+      if (!admin && !bypass && (!app.kind || app.kind === "app")) {
+        checkingLaunch.current = true;
+        const info = await invoke<RunningWindows>("get_running_windows", { appId: app.id });
+        checkingLaunch.current = false;
+        if (revision !== launchRevision.current) return;
+        if (info.windows.length) { setRunningChoice({ app, info }); return; }
+      }
+      const result = await invoke<{ usage: Usage | null }>("launch_app", { appId: app.id, admin, newWindow });
       if (result.usage) setConfig((current) => current ? { ...current, usage: { ...current.usage, [app.id]: result.usage! } } : current);
-      await invoke("hide_window");
-      setQuery("");
+      await finishLaunch();
     } catch (e) {
-      console.error("启动失败", e);
-      alert(`启动失败: ${e}`);
+      if (bypass && runningChoice) throw e;
+      if (revision === launchRevision.current) setNotice(`启动失败：${e}`);
     } finally {
+      checkingLaunch.current=false;
       launchPending.current=false;
     }
+  };
+  const activateWindow = async (app: AppEntry, windowId: string) => {
+    if (launchPending.current) return;
+    launchPending.current = true;
+    try {
+      await invoke("activate_app_window", { appId: app.id, windowId });
+      await finishLaunch();
+    } finally { launchPending.current = false; }
   };
 
   // 手动设置应用分类
@@ -398,6 +428,10 @@ function App() {
 
   // 关闭启动器（含设置面板）
   const hideLauncher = () => {
+    if (!overlayKey && searchMode === "files" && fileSearchRef.current?.closePreview()) return;
+    if (launchPending.current && !checkingLaunch.current) return;
+    ++launchRevision.current;
+    if (runningChoice) { setRunningChoice(null); return; }
     if (preview) { setPreview(null); return; }
     if (editor) { setEditor(null); return; }
     if (menu) { setMenu(null); return; }
@@ -428,12 +462,15 @@ function App() {
     if (e.key === "Escape") {
       // Esc 已由全局 window 监听统一处理，这里 stopPropagation 防止重复触发
       e.stopPropagation();
+      if (e.repeat) return;
       hideLauncher();
       return;
     }
 
     // 设置面板打开时，不处理网格导航
-    if (settingsOpen || diagnosticsOpen || healthOpen || editor || preview || menu || dragging) return;
+    if (overlayKey || dragging) return;
+
+    if (searchMode === "files" && fileSearchRef.current?.onKeyDown(e)) return;
 
     // 搜索框以外的输入控件保留自己的键盘行为。
     const target = e.target;
@@ -445,6 +482,8 @@ function App() {
       return;
     }
 
+    if (searchMode === "files") return;
+    if (e.nativeEvent.isComposing) return;
     const cols = getColumnCount();
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -462,7 +501,7 @@ function App() {
       e.preventDefault();
       const app = filtered[selectedIndex];
       if (app) {
-        launch(app, e.ctrlKey || e.metaKey);
+        void launch(app, e.ctrlKey || e.metaKey, e.shiftKey);
       }
     }
   };
@@ -553,12 +592,12 @@ function App() {
     setSelectedId(filtered[index]?.id ?? null);
   };
 
-  const iconTargets = JSON.stringify([...dockApps, ...filtered].filter(app => !app.kind || app.kind === "app").map(({ path, shortcut_path }) => ({ path, shortcut_path })));
+  const iconTargets = JSON.stringify([...dockApps, ...(searchMode === "apps" ? filtered : [])].filter(app => !app.kind || app.kind === "app").map(({ path, shortcut_path }) => ({ path, shortcut_path })));
   useEffect(() => {
     const loader = iconLoader.current;
     const grid = gridRef.current;
     const dock = dockRef.current;
-    if (!loader || !grid || !dock) return;
+    if (!loader || !dock) return;
     const targets: IconTarget[] = JSON.parse(iconTargets);
     const byKey = new Map(targets.map((app) => [iconKey(app), app]));
     const visible = new Map<string, number>();
@@ -567,7 +606,7 @@ function App() {
     const publish = () => loader.setVisible([...new Map([...visible, ...dockVisible])].sort((a, b) => a[1] - b[1])
       .map(([key]) => byKey.get(key)).filter((app): app is IconTarget => !!app));
     let observer: IntersectionObserver | undefined;
-    if (typeof IntersectionObserver !== "undefined") {
+    if (grid && typeof IntersectionObserver !== "undefined") {
       observer = new IntersectionObserver((entries) => {
         if (disposed) return;
         const bounds = grid.getBoundingClientRect();
@@ -584,7 +623,7 @@ function App() {
         publish();
       }, { root: grid, rootMargin: "120px 0px" });
       grid.querySelectorAll(".app-tile").forEach((tile) => observer!.observe(tile));
-    } else {
+    } else if (typeof IntersectionObserver === "undefined") {
       loader.setVisible(targets);
     }
     const dockObserver = typeof IntersectionObserver !== "undefined" ? new IntersectionObserver(entries => {
@@ -612,7 +651,7 @@ function App() {
       window.clearInterval(retryTimer);
       loader.setVisible([]);
     };
-  }, [iconTargets, iconRevision]);
+  }, [iconTargets, iconRevision, searchMode]);
 
   // 查询变化时重置选中
   useEffect(() => {
@@ -643,24 +682,29 @@ function App() {
       <div className="search-bar" data-tauri-drag-region>
         <button type="button" className="window-drag-handle" aria-label="拖动窗口" title="按住拖动窗口" data-tauri-drag-region />
         <span className="app-wordmark" aria-hidden="true" data-tauri-drag-region>Luma</span>
+        <div className="search-mode-switch" role="group" aria-label="搜索模式">
+          {([["apps", "应用"], ["files", "文件"]] as const).map(([value, label]) => <button key={value} aria-pressed={searchMode === value} onClick={() => { setSearchMode(value); setQuery(""); setComposing(false); inputRef.current?.focus(); }}>{label}</button>)}
+        </div>
         <div className="search-input-wrap"><UiIcon name="search"/>
         <input
           ref={inputRef}
           type="text"
-          placeholder="搜索应用、拼音或别名"
-          aria-label="搜索应用"
+          placeholder={searchMode === "apps" ? "搜索应用、拼音或别名" : "搜索文件名或路径 · 支持 ext:pdf"}
+          aria-label={searchMode === "apps" ? "搜索应用" : "搜索文件"}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
+          onCompositionStart={() => setComposing(true)}
+          onCompositionEnd={() => setComposing(false)}
           autoFocus
         />
         </div>
         <button className="settings-btn" title="添加快捷入口" aria-label="添加快捷入口" onClick={() => void addManualApp()}><UiIcon name="plus"/></button>
         <button
           className={`settings-btn refresh-btn${refreshing ? " refreshing" : ""}`}
-          onClick={() => void scan(true)}
-          disabled={refreshing}
-          aria-label={refreshing ? "正在扫描应用" : "刷新应用"}
-          title={scanError ?? (refreshing ? "正在扫描应用" : "刷新应用")}
+          onClick={() => searchMode === "files" ? fileSearchRef.current?.refresh() : void scan(true)}
+          disabled={searchMode === "apps" && refreshing}
+          aria-label={searchMode === "files" ? "刷新文件搜索" : refreshing ? "正在扫描应用" : "刷新应用"}
+          title={searchMode === "files" ? "刷新文件搜索" : scanError ?? (refreshing ? "正在扫描应用" : "刷新应用")}
         >
           <span aria-hidden="true"><UiIcon name="refresh"/></span>
         </button>
@@ -677,7 +721,8 @@ function App() {
       <FixedBar apps={dockApps} listRef={dockRef} drag={appDrag.drag} onPlace={placePinned} health={healthById} showHints={altPressed}
         onLaunch={app => void launch(app)} onMenu={(app, x, y) => setMenu({ app, x, y })} onDrag={appDrag.start}/>
 
-      <div className="main-area">
+      {searchMode === "files" ? <FileSearch ref={fileSearchRef} query={query} composing={composing} suspended={!!overlayKey} onOpened={() => { void invoke("hide_window"); setQuery(""); }}/>
+      : <><div className="main-area">
         {/* 分类侧边栏 */}
         <div className="category-sidebar" ref={categoriesRef}>
           {categories.map((cat) => (
@@ -819,6 +864,7 @@ function App() {
         </label>
       </div>
 
+      </>}
       </div>
       {appDrag.drag && <div className="app-drag-ghost" aria-hidden="true" style={{ left: Math.min(appDrag.drag.x + 14, window.innerWidth - 210), top: Math.min(appDrag.drag.y + 14, window.innerHeight - 64) }}>
         <EntryIcon app={appDrag.drag.app}/>
@@ -1072,9 +1118,12 @@ function App() {
       {menu && <AppMenu app={menu.app} config={config} x={menu.x} y={menu.y} onClose={() => setMenu(null)}
         onEdit={() => { setEditor({ app: menu.app }); setMenu(null); }} onDetails={() => { openDiagnostics(menu.app.id); setMenu(null); }}
         onRepair={()=>repairEntry(menu.app)}
-        onLaunch={admin => { void launch(menu.app, admin); setMenu(null); }} onPin={() => { void togglePinned(menu.app); setMenu(null); }}
+        onLaunch={(admin, bypass) => { void launch(menu.app, admin, bypass); setMenu(null); }} onPin={() => { void togglePinned(menu.app); setMenu(null); }}
         onHide={() => { void toggleHidden(menu.app); setMenu(null); }} onMessage={setNotice}/>}
-      {notice && !editor && !preview && !menu && !healthOpen && <div className="toast" role="status"><span>{notice}</span><button aria-label="关闭提示" onClick={() => setNotice("")}><UiIcon name="close"/></button></div>}
+      {runningChoice && <RunningAppDialog key={runningChoice.app.id} app={runningChoice.app} initial={runningChoice.info}
+        onClose={hideLauncher} onActivate={id => activateWindow(runningChoice.app, id)}
+        onLaunch={newWindow => launch(runningChoice.app, false, true, newWindow)}/>}
+      {notice && !editor && !preview && !menu && !healthOpen && !runningChoice && <div className="toast" role="status"><span>{notice}</span><button aria-label="关闭提示" onClick={() => setNotice("")}><UiIcon name="close"/></button></div>}
       <span className="resize-grip" aria-hidden="true"/>
     </div>
   );

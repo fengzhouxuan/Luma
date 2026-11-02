@@ -2,5 +2,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    if luma_lib::run_file_search_worker() {
+        return;
+    }
     luma_lib::run()
 }

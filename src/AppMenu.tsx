@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useLayoutEffect, useRef } from "react";
 import { focusableElements } from "./overlayFocus";
 import type { AppEntry, Config } from "./types";
-interface Props { app: AppEntry; config: Config | null; x: number; y: number; onClose: () => void; onEdit: () => void; onRepair: () => void; onDetails: () => void; onLaunch: (admin: boolean) => void; onPin: () => void; onHide: () => void; onMessage: (message: string) => void }
+interface Props { app: AppEntry; config: Config | null; x: number; y: number; onClose: () => void; onEdit: () => void; onRepair: () => void; onDetails: () => void; onLaunch: (admin: boolean, bypass?: boolean) => void; onPin: () => void; onHide: () => void; onMessage: (message: string) => void }
 export function AppMenu({ app, config, x, y, onClose, onEdit, onRepair, onDetails, onLaunch, onPin, onHide, onMessage }: Props) {
   const ref = useRef<HTMLElement>(null);
   useLayoutEffect(() => {
@@ -26,6 +26,7 @@ export function AppMenu({ app, config, x, y, onClose, onEdit, onRepair, onDetail
         items[next]?.focus();
       }}>
       <strong>{app.name}</strong><button role="menuitem" onClick={() => onLaunch(false)}>启动应用</button>
+      {(!app.kind || app.kind === "app") && <button role="menuitem" onClick={() => onLaunch(false, true)}>再次启动（跳过窗口选择）</button>}
       <button role="menuitem" disabled={managed} onClick={() => onLaunch(true)}>以管理员身份启动</button>
       <button role="menuitem" onClick={onEdit}>别名与启动设置</button>
       <button role="menuitem" onClick={onRepair}>重新选择入口目标</button>

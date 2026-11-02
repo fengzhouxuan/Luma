@@ -8,6 +8,7 @@ mod catalog;
 mod config;
 mod diagnostics;
 mod discovery;
+mod file_search;
 mod health;
 #[cfg(windows)]
 mod icon_resource;
@@ -16,6 +17,8 @@ mod launch;
 mod personal;
 mod portable;
 mod position;
+mod quicklook;
+mod running;
 mod runtime;
 mod shortcuts;
 mod updates;
@@ -25,6 +28,8 @@ mod model;
 #[cfg(windows)]
 mod packaged;
 use model::AppEntry;
+
+pub use file_search::run_file_search_worker;
 
 /// 扫描应用：开始菜单 .lnk + 注册表 App Paths
 #[tauri::command]
@@ -905,7 +910,17 @@ pub fn run() {
         }))
         .invoke_handler(tauri::generate_handler![
             scan_apps,
+            file_search::search_files,
+            file_search::cancel_file_search,
+            file_search::file_action,
+            quicklook::preview_file,
+            quicklook::close_file_preview,
+            quicklook::open_quicklook_download,
+            file_search::start_everything,
+            file_search::open_everything_download,
             launch::launch_app,
+            running::get_running_windows,
+            running::activate_app_window,
             icons::get_icon,
             hide_window,
             config::get_config,

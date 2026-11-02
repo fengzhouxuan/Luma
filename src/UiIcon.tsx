@@ -1,6 +1,9 @@
 import type { ReactNode } from "react";
-type Name = "folder" | "search" | "plus" | "close" | "star" | "info" | "refresh" | "settings" | "grid" | "game" | "office" | "code" | "media" | "chat" | "browser" | "other";
+type Name = "preview" | "file" | "copy" | "folder" | "search" | "plus" | "close" | "star" | "info" | "refresh" | "settings" | "grid" | "game" | "office" | "code" | "media" | "chat" | "browser" | "other";
 const paths: Record<Name, ReactNode> = {
+  preview: <><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></>,
+  file: <><path d="M13 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10Z"/><path d="M13 3v7h7M8 14h8M8 17h5"/></>,
+  copy: <><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></>,
   folder: <path d="M3 7V5a2 2 0 0 1 2-2h5l3 4h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/>,
   search: <><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></>,
   plus: <path d="M12 5v14M5 12h14"/>,
