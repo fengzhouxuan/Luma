@@ -52,7 +52,7 @@ impl SavedPosition {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Rect {
     pub x: i32,
     pub y: i32,
@@ -60,13 +60,13 @@ pub struct Rect {
     pub height: u32,
 }
 impl Rect {
-    fn contains(self, other: Self) -> bool {
+    pub(crate) fn contains(self, other: Self) -> bool {
         other.x >= self.x
             && other.y >= self.y
             && other.x as i64 + other.width as i64 <= self.x as i64 + self.width as i64
             && other.y as i64 + other.height as i64 <= self.y as i64 + self.height as i64
     }
-    fn overlap(self, other: Self) -> u64 {
+    pub(crate) fn overlap(self, other: Self) -> u64 {
         let width = (self.x as i64 + self.width as i64).min(other.x as i64 + other.width as i64)
             - (self.x as i64).max(other.x as i64);
         let height = (self.y as i64 + self.height as i64).min(other.y as i64 + other.height as i64)
@@ -278,6 +278,11 @@ fn inventory(window: &tauri::WebviewWindow) -> Result<Vec<Display>, String> {
         .collect();
     displays.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(displays)
+}
+
+#[cfg(windows)]
+pub(crate) fn display_id(gdi_name: &str) -> String {
+    native::identity(gdi_name).0
 }
 
 fn rect(window: &tauri::WebviewWindow) -> Result<Rect, String> {

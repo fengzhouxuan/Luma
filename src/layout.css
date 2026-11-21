@@ -1,8 +1,8 @@
-.launchpad { --tile-min: 100px; --tile-height: 128px; --tile-gap: 12px; --tile-padding: 19px; --entry-icon-size: 54px; --entry-name-size: 12px; }
-.launchpad.density-compact { --tile-min: 84px; --tile-height: 106px; --tile-gap: 8px; --tile-padding: 14px; --entry-icon-size: 44px; --entry-name-size: 11px; }
-.launchpad.density-comfortable { --tile-min: 128px; --tile-height: 154px; --tile-gap: 16px; --tile-padding: 22px; --entry-icon-size: 64px; --entry-name-size: 13px; }
+.launchpad { --tile-min: 104px; --tile-height: 124px; --tile-gap: 8px; --tile-padding: 16px; --entry-icon-size: 52px; --entry-name-size: 12px; }
+.launchpad.density-compact { --tile-min: 84px; --tile-height: 112px; --tile-gap: 4px; --tile-padding: 12px; --entry-icon-size: 44px; --entry-name-size: 12px; }
+.launchpad.density-comfortable { --tile-min: 128px; --tile-height: 148px; --tile-gap: 12px; --tile-padding: 20px; --entry-icon-size: 64px; --entry-name-size: 13px; }
 .app-grid { grid-template-columns: repeat(auto-fill,minmax(var(--tile-min),1fr)); gap: var(--tile-gap); }
-.app-tile { min-height: var(--tile-height); gap: var(--tile-gap); padding-top: var(--tile-padding); }
+.app-tile { min-height: var(--tile-height); gap: 8px; padding-top: var(--tile-padding); }
 .app-icon { width: var(--entry-icon-size); height: var(--entry-icon-size); }
 .app-name { font-size: var(--entry-name-size); }
 .window-layout-controls { display: grid; gap: 12px; margin-bottom: 16px; }
@@ -10,7 +10,7 @@
 .window-size-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
 .window-size-row .settings-hint { flex: 1 1 220px; }
 .window-size-row .btn { flex: 0 0 auto; margin-left: auto; }
-.density-choices [aria-pressed="true"] { border-color: #a7e9dc80; color: #d8fff1; background-color: #8fd9da26; }
+.density-choices [aria-pressed="true"] { border-color: var(--selection-border); color: var(--selection-text); background: var(--selection-surface); }
 .fixed-app { position: relative; }
 .fixed-key-hint { position: absolute; right: -1px; bottom: -1px; display: grid; place-items: center; width: 13px; height: 13px; border: 1px solid #c6e8ee50; border-radius: 5px; font-size: 9px; color: #e6fff9; background: #26354df5; opacity: 0; pointer-events: none; }
 .show-key-hints .fixed-key-hint { opacity: 1; }

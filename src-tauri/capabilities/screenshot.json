@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "screenshot",
+  "description": "Luma screenshot and pinned image windows",
+  "windows": ["screenshot-*"],
+  "permissions": ["core:window:allow-start-dragging"]
+}

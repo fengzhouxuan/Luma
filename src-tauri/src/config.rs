@@ -18,6 +18,13 @@ pub enum Hotkey {
     Combo { modifiers: Vec<String>, key: String },
 }
 
+fn default_screenshot_hotkey() -> Option<Hotkey> {
+    Some(Hotkey::Combo {
+        modifiers: vec!["ctrl".into(), "shift".into()],
+        key: "4".into(),
+    })
+}
+
 /// 窗口外观配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Appearance {
@@ -63,6 +70,13 @@ pub struct Config {
     #[serde(default)]
     pub entry_records: std::collections::HashMap<String, crate::health::EntryRecord>,
     pub hotkey: Hotkey,
+    #[serde(default = "default_screenshot_hotkey")]
+    pub screenshot_hotkey: Option<Hotkey>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::screenshot::Preferences::is_empty"
+    )]
+    pub(crate) screenshot_prefs: crate::screenshot::Preferences,
     pub autostart: bool,
     pub appearance: Appearance,
     /// 是否显示全部应用（包括被自动过滤的噪音应用）
@@ -103,6 +117,8 @@ impl Default for Config {
                 modifiers: vec!["alt".to_string(), "shift".to_string()],
                 key: "space".to_string(),
             },
+            screenshot_hotkey: default_screenshot_hotkey(),
+            screenshot_prefs: Default::default(),
             autostart: false,
             appearance: Appearance {
                 theme: ThemePreference::Dark,
@@ -285,6 +301,41 @@ pub fn set_appearance(appearance: Appearance, app: tauri::AppHandle) -> Result<(
     update(|current| current.appearance = appearance.clone())?;
     crate::appearance::refresh(&app);
     Ok(())
+}
+
+#[tauri::command]
+pub fn set_screenshot_hotkey(
+    window: tauri::WebviewWindow,
+    hotkey: Option<Hotkey>,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("请从 Luma 设置修改截图快捷键".into());
+    }
+    #[cfg(windows)]
+    {
+        let previous = get().screenshot_hotkey;
+        if let Some(key) = &hotkey {
+            crate::double_alt::register_screenshot(key)?;
+        } else {
+            crate::double_alt::clear_screenshot();
+        }
+        if let Err(error) = update(|cfg| cfg.screenshot_hotkey = hotkey) {
+            if let Some(key) = previous {
+                if crate::double_alt::register_screenshot(&key).is_err() {
+                    crate::double_alt::clear_screenshot();
+                }
+            } else {
+                crate::double_alt::clear_screenshot();
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = hotkey;
+        Err("截图仅支持 Windows".into())
+    }
 }
 
 #[tauri::command]

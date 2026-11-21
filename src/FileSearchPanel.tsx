@@ -194,7 +194,6 @@ export function FileSearch({ query, composing, suspended, ref, onOpened }: {
           <button className="btn" key={value} aria-pressed={filter === value} onClick={() => { setFilter(value); setOffset(0); }}>{label}</button>)}
       </div>
       <span className="file-provider" title="使用本机 Everything 索引，搜索词和结果不上传">{response?.version ? `Everything ${response.version}` : "Everything"}</span>
-      <button className="file-icon-button" aria-label="刷新文件搜索" title="刷新文件搜索" onClick={() => setRefresh(value => value + 1)}><UiIcon name="refresh"/></button>
     </div>
     <div className="file-message" role="status" aria-live="polite">
       {notice || (startupUntil && response?.state === "unavailable" ? "正在等待 Everything 启动并连接…" : status) || (busy ? "正在搜索…" : query.trim() ? `${response?.total.toLocaleString() ?? 0} 个结果` : "输入文件名或路径，搜索本机文件和文件夹")}

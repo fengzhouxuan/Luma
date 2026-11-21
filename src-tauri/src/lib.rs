@@ -23,6 +23,13 @@ mod position;
 mod quicklook;
 mod running;
 mod runtime;
+mod screenshot;
+mod screenshot_long;
+#[cfg(windows)]
+mod screenshot_outline;
+#[cfg(windows)]
+mod screenshot_region;
+mod screenshot_stitch;
 mod shortcuts;
 mod updates;
 mod watcher;
@@ -756,6 +763,9 @@ mod double_alt {
 
     /// 唤醒快捷键的注册 ID（RegisterHotKey 用它区分消息来源）
     const HOTKEY_ID: i32 = 1;
+    static SCREENSHOT_REGISTRATION: std::sync::Mutex<(i32, u32, u32)> =
+        std::sync::Mutex::new((0, 0, 0));
+    pub static SCREENSHOT: AtomicBool = AtomicBool::new(false);
 
     /// 全局标志：检测到唤醒快捷键时置 true，主线程读取后复位
     pub static TOGGLE: AtomicBool = AtomicBool::new(false);
@@ -832,6 +842,10 @@ mod double_alt {
             TOGGLE.store(true, Ordering::SeqCst);
             return 0;
         }
+        if msg == WM_HOTKEY && matches!(w_param as i32, 2 | 3) {
+            SCREENSHOT.store(true, Ordering::SeqCst);
+            return 0;
+        }
         unsafe { DefWindowProcW(hwnd, msg, w_param, l_param) }
     }
 
@@ -872,6 +886,44 @@ mod double_alt {
             }
         }
         Ok(())
+    }
+
+    pub fn register_screenshot(hotkey: &Hotkey) -> Result<(), String> {
+        let Hotkey::Combo { modifiers, key } = hotkey else {
+            return Err("截图快捷键需要使用组合键".into());
+        };
+        let modifiers = modifier_flags(modifiers);
+        let key = key_vk(key);
+        if modifiers == 0 || key == 0 {
+            return Err("无法识别截图快捷键".into());
+        }
+        let mut previous = SCREENSHOT_REGISTRATION.lock().unwrap();
+        if previous.0 != 0 && (previous.1, previous.2) == (modifiers, key) {
+            return Ok(());
+        }
+        let id = if previous.0 == 2 { 3 } else { 2 };
+        let hwnd = hotkey_window() as HWND;
+        if hwnd.is_null() || unsafe { RegisterHotKey(hwnd, id, modifiers | MOD_NOREPEAT, key) } == 0
+        {
+            return Err("截图快捷键已被占用，请换一个组合".into());
+        }
+        if previous.0 != 0 {
+            unsafe {
+                UnregisterHotKey(hwnd, previous.0);
+            }
+        }
+        *previous = (id, modifiers, key);
+        Ok(())
+    }
+
+    pub fn clear_screenshot() {
+        let mut previous = SCREENSHOT_REGISTRATION.lock().unwrap();
+        if previous.0 != 0 {
+            unsafe {
+                UnregisterHotKey(hotkey_window() as HWND, previous.0);
+            }
+            *previous = (0, 0, 0);
+        }
     }
 
     /// 获取（或创建）承载热键的 message-only 隐藏窗口
@@ -946,9 +998,15 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // 已有实例在运行：唤醒它的窗口，新实例随后自动退出
-            runtime::show(app);
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            let handle = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                if args.iter().skip(1).any(|arg| arg == "--screenshot") {
+                    screenshot::start_from_shortcut(&handle, false);
+                } else {
+                    runtime::show(&handle);
+                }
+            });
         }))
         .invoke_handler(tauri::generate_handler![
             scan_apps,
@@ -968,6 +1026,21 @@ pub fn run() {
             config::get_config,
             config::set_config,
             config::set_appearance,
+            config::set_screenshot_hotkey,
+            screenshot::start_screenshot,
+            screenshot::screenshot_scene,
+            screenshot::screenshot_pixels,
+            screenshot::screenshot_ready,
+            screenshot::screenshot_toast_ready,
+            screenshot::screenshot_close,
+            screenshot::screenshot_output,
+            screenshot::screenshot_zoom_pin,
+            screenshot_long::screenshot_start_long,
+            screenshot_long::screenshot_long_status,
+            screenshot_long::screenshot_long_finish,
+            screenshot_long::screenshot_long_cancel,
+            screenshot_long::screenshot_long_preview,
+            screenshot_long::screenshot_long_output,
             autostart::set_autostart,
             autostart::get_autostart_status,
             autostart::migrate_legacy_autostart,
@@ -1051,6 +1124,11 @@ pub fn run() {
                         eprintln!("[luma] {}", e);
                     }
                     double_alt::start();
+                    if let Some(hotkey) = config::get().screenshot_hotkey
+                        && let Err(error) = double_alt::register_screenshot(&hotkey)
+                    {
+                        crate::diagnostics::record("截图", "注册快捷键", None, error);
+                    }
 
                     // 轮询热键标志，切换到主线程执行显示/隐藏
                     // 关键：show + 抢焦点必须在主线程（UI 线程）执行，
@@ -1080,6 +1158,12 @@ pub fn run() {
                             }
 
                             // 处理唤醒热键：切换显示/隐藏
+                            if double_alt::SCREENSHOT.swap(false, Ordering::SeqCst) {
+                                let app = handle.clone();
+                                let _ = handle.run_on_main_thread(move || {
+                                    screenshot::start_from_shortcut(&app, false);
+                                });
+                            }
                             if double_alt::TOGGLE.swap(false, Ordering::SeqCst) {
                                 let win = win.clone();
                                 let handle = handle.clone();
@@ -1107,6 +1191,11 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {
+        if matches!(event, tauri::RunEvent::Ready)
+            && std::env::args_os().skip(1).any(|arg| arg == "--screenshot")
+        {
+            screenshot::start_from_shortcut(app_handle, false);
+        }
         if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
             position::flush(app_handle);
         }

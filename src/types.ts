@@ -24,6 +24,7 @@ export interface UpdateInfo { current: string; version: string; notes: string; p
 export interface Config {
   window_size?: { width: number; height: number };
   hotkey: HotkeyConfig;
+  screenshot_hotkey?: HotkeyConfig | null;
   autostart: boolean;
   appearance: { opacity: number; corner_radius: number; density?: "compact" | "standard" | "comfortable"; theme?: "dark" | "light" | "system" };
   show_all?: boolean;

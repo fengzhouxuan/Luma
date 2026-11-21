@@ -43,6 +43,9 @@ pub fn set_overlay_open(open: bool) {
 }
 
 pub fn show(app: &tauri::AppHandle) {
+    if crate::screenshot::active() {
+        return;
+    }
     if let Some(window) = app.get_webview_window("main") {
         crate::position::before_show(&window);
         #[cfg(windows)]
@@ -81,6 +84,14 @@ pub fn setup(app: &mut tauri::App) -> tauri::Result<()> {
     )?;
     let show = MenuItem::with_id(app, "show", "显示 Luma", true, None::<&str>)?;
     let refresh = MenuItem::with_id(app, "refresh", "刷新应用", true, None::<&str>)?;
+    let screenshot = MenuItem::with_id(app, "screenshot", "截图", cfg!(windows), None::<&str>)?;
+    let screenshot_last = MenuItem::with_id(
+        app,
+        "screenshot-last",
+        "截取上次区域",
+        cfg!(windows),
+        None::<&str>,
+    )?;
     let settings = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
     let diagnostics = MenuItem::with_id(app, "diagnostics", "应用诊断", true, None::<&str>)?;
     let restart = MenuItem::with_id(app, "restart", "重新启动", true, None::<&str>)?;
@@ -91,6 +102,8 @@ pub fn setup(app: &mut tauri::App) -> tauri::Result<()> {
         &[
             &version,
             &show,
+            &screenshot,
+            &screenshot_last,
             &refresh,
             &settings,
             &diagnostics,
@@ -105,6 +118,8 @@ pub fn setup(app: &mut tauri::App) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => self::show(app),
+            "screenshot" => crate::screenshot::start_from_shortcut(app, false),
+            "screenshot-last" => crate::screenshot::start_from_shortcut(app, true),
             "refresh" => {
                 self::show(app);
                 let _ = app.emit("refresh-apps", ());

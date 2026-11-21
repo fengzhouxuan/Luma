@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
-type Name = "preview" | "file" | "copy" | "folder" | "search" | "plus" | "close" | "star" | "info" | "refresh" | "settings" | "grid" | "game" | "office" | "code" | "media" | "chat" | "browser" | "other";
+type Name = "screenshot" | "preview" | "file" | "copy" | "folder" | "search" | "plus" | "close" | "star" | "info" | "refresh" | "settings" | "grid" | "game" | "office" | "code" | "media" | "chat" | "browser" | "other";
 const paths: Record<Name, ReactNode> = {
+  screenshot: <><path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3"/><circle cx="12" cy="12" r="3"/></>,
   preview: <><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></>,
   file: <><path d="M13 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10Z"/><path d="M13 3v7h7M8 14h8M8 17h5"/></>,
   copy: <><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></>,

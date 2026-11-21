@@ -76,6 +76,9 @@ function App() {
   }, [notice]);
   const [capturing, setCapturing] = useState(false);
   const [hotkeyDraft, setHotkeyDraft] = useState<HotkeyConfig | null>(null);
+  const [screenshotKeyDraft, setScreenshotKeyDraft] = useState<HotkeyConfig | null>(null);
+  const [screenshotKeyBusy, setScreenshotKeyBusy] = useState(false);
+  const [screenshotKeyError, setScreenshotKeyError] = useState("");
   const [extraDirDraft, setExtraDirDraft] = useState("");
   const [activeCategory, setActiveCategory] = useState<string>("全部");
   const [categoryDraft, setCategoryDraft] = useState("");
@@ -253,6 +256,9 @@ function App() {
     subscribe("refresh-apps", () => void scan(true));
     subscribe("open-settings", () => { setDiagnosticsOpen(false); setSettingsOpen(true); });
     subscribe("open-diagnostics", () => openDiagnostics(null));
+    void listen<string>("screenshot-error", ({payload}) => {
+      if (!disposed) setNotice(payload);
+    }).then(stop => { if (disposed) stop(); else listeners.push(stop); }).catch(console.error);
     void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
       if (!focused && checkingLaunch.current) ++launchRevision.current;
       if (!disposed && focused &&
@@ -323,6 +329,20 @@ function App() {
     } catch (e) {
       console.error("保存额外目录失败", e);
       alert(`保存额外目录失败: ${e}`);
+    }
+  };
+
+  const saveScreenshotHotkey = async (hotkey: HotkeyConfig | null) => {
+    setScreenshotKeyBusy(true);
+    setScreenshotKeyError("");
+    try {
+      await invoke("set_screenshot_hotkey", { hotkey });
+      setConfig(current => current ? {...current, screenshot_hotkey: hotkey} : current);
+      setScreenshotKeyDraft(null);
+    } catch (error) {
+      setScreenshotKeyError(String(error));
+    } finally {
+      setScreenshotKeyBusy(false);
     }
   };
 
@@ -520,7 +540,7 @@ function App() {
     if (e.shiftKey) mods.push("shift");
     if (e.metaKey) mods.push("meta");
 
-    const key = normalizeKey(e.key);
+    const key = normalizeKey(e.key) ?? (/^Digit[0-9]$/.test(e.code) ? e.code.slice(-1) : null);
     if (!key) return null;
 
     // 必须至少有一个修饰键（RegisterHotKey 只支持组合键）
@@ -701,24 +721,23 @@ function App() {
           autoFocus
         />
         </div>
-        <button className="settings-btn" title="添加快捷入口" aria-label="添加快捷入口" onClick={() => void addManualApp()}><UiIcon name="plus"/></button>
-        <button
-          className={`settings-btn refresh-btn${refreshing ? " refreshing" : ""}`}
-          onClick={() => searchMode === "files" ? fileSearchRef.current?.refresh() : void scan(true)}
-          disabled={searchMode === "apps" && refreshing}
-          aria-label={searchMode === "files" ? "刷新文件搜索" : refreshing ? "正在扫描应用" : "刷新应用"}
-          title={searchMode === "files" ? "刷新文件搜索" : scanError ?? (refreshing ? "正在扫描应用" : "刷新应用")}
-        >
-          <span aria-hidden="true"><UiIcon name="refresh"/></span>
-        </button>
-        <button
-          className="settings-btn"
-          onClick={() => setSettingsOpen(true)}
-          title="设置"
-          aria-label="设置"
-        >
-          <UiIcon name="settings"/>
-        </button>
+        <div className="search-actions" role="group" aria-label="启动器工具">
+          <button className="settings-btn" title="添加快捷入口" aria-label="添加快捷入口" onClick={() => void addManualApp()}><UiIcon name="plus"/></button>
+          <button className="settings-btn" title={config?.screenshot_hotkey ? "截图 · " + hotkeyLabel(config.screenshot_hotkey) : "截图"}
+            aria-label="截图" onClick={() => void invoke("start_screenshot").catch(error => setNotice(String(error)))}><UiIcon name="screenshot"/></button>
+          <button
+            className={`settings-btn refresh-btn${refreshing ? " refreshing" : ""}`}
+            onClick={() => searchMode === "files" ? fileSearchRef.current?.refresh() : void scan(true)}
+            disabled={searchMode === "apps" && refreshing}
+            aria-label={searchMode === "files" ? "刷新文件搜索" : refreshing ? "正在扫描应用" : "刷新应用"}
+            title={searchMode === "files" ? "刷新文件搜索" : scanError ?? (refreshing ? "正在扫描应用" : "刷新应用")}
+          >
+            <span aria-hidden="true"><UiIcon name="refresh"/></span>
+          </button>
+          <button className="settings-btn" onClick={() => setSettingsOpen(true)} title="设置" aria-label="设置">
+            <UiIcon name="settings"/>
+          </button>
+        </div>
       </div>
 
       <FixedBar apps={dockApps} listRef={dockRef} drag={appDrag.drag} onPlace={placePinned} health={healthById} showHints={altPressed}
@@ -843,7 +862,15 @@ function App() {
       </div>
 
       <div className="footer-hint">
-        <span className="footer-status" title="↑↓←→ 导航 · Enter 启动 · Ctrl+Enter 管理员启动 · Esc 收起">{filtered.length} 个应用<span className="footer-shortcuts"> · ↑↓←→ 导航 · Enter 启动</span><span className="footer-admin-shortcut"> · Ctrl+Enter 管理员启动</span><span className="footer-shortcuts"> · Esc 收起</span></span>
+        <span className="footer-status" title="↑↓←→ 导航 · Enter 启动 · Ctrl+Enter 管理员启动 · Esc 收起">
+          <span>{filtered.length} 个应用</span>
+          <span className="footer-shortcuts">
+            <span><kbd>↑↓←→</kbd> 导航</span>
+            <span><kbd>Enter</kbd> 启动</span>
+            <span><kbd>Ctrl+Enter</kbd> 管理员启动</span>
+            <span><kbd>Esc</kbd> 收起</span>
+          </span>
+        </span>
         <button className="footer-link" onClick={() => openDiagnostics(null)}>应用诊断</button>
         <button className="footer-link" onClick={openHealth}>入口检查{healthById.size ? ` · ${healthById.size}` : ""}</button>
         <label className="show-all-toggle" title="勾选后显示被自动过滤的卸载程序、命令行工具等">
@@ -878,7 +905,7 @@ function App() {
         <Dialog title="设置" label="关闭设置" onClose={hideLauncher}>
 
             <div className="settings-section">
-              <div className="settings-label">Luma {snapshot?.version ?? "1.2.0"}</div>
+              <div className="settings-label">{snapshot?.version ? `Luma ${snapshot.version}` : "Luma"}</div>
               <div className="runtime-path" title={snapshot?.executable}>{snapshot?.executable ?? "正在读取运行信息…"}</div>
               <div className="panel-actions">
                 <button className="btn" onClick={() => openDiagnostics(null)}>应用诊断</button>
@@ -888,6 +915,31 @@ function App() {
             </div>
 
             <ManagementTools onImported={personalSaved} onAdd={() => void addManualApp()} onPreview={setPreview}/>
+
+            <div className="settings-section">
+              <div className="settings-label">截图快捷键</div>
+              <div className="settings-row">
+                <input className="hotkey-display" aria-label="截图快捷键" readOnly
+                  value={screenshotKeyDraft ? hotkeyLabel(screenshotKeyDraft) : config.screenshot_hotkey ? hotkeyLabel(config.screenshot_hotkey) : "已关闭"}
+                  onKeyDown={event => {
+                    if (["Escape", "Tab"].includes(event.key)) return;
+                    event.stopPropagation();
+                    event.preventDefault();
+                    const key = parseHotkey(event);
+                    if (key) {
+                      setScreenshotKeyDraft(key);
+                      setScreenshotKeyError("");
+                    }
+                  }}/>
+                <button className="btn" disabled={!screenshotKeyDraft || screenshotKeyBusy}
+                  onClick={() => screenshotKeyDraft && void saveScreenshotHotkey(screenshotKeyDraft)}>保存</button>
+                <button className="btn" disabled={!config.screenshot_hotkey || screenshotKeyBusy}
+                  onClick={() => void saveScreenshotHotkey(null)}>关闭</button>
+              </div>
+              <div className="settings-hint" role={screenshotKeyError ? "alert" : undefined}>
+                {screenshotKeyError || "点击输入框并按新的组合键，然后保存。也可以用顶部按钮或托盘菜单截图。"}
+              </div>
+            </div>
 
             {/* 唤醒快捷键 */}
             <div className="settings-section">
